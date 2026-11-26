@@ -102,9 +102,9 @@ class RenderingServerDefault : public RenderingServer {
 	void _call_on_render_thread(const Callable &p_callable);
 
 #ifdef DEBUG_ENABLED
-	// A call that waited for the render thread, named (hacco #1435): the main thread's first wait in each function is
-	// logged with how long it took, and any later one of 20 ms or more, so a frame stalled behind a long render frame
-	// says which call made it wait.
+	// A call that waited for the render thread, named (hacco #1435): a main-thread wait of 20 ms or more is logged with
+	// its function, so a frame stalled behind a long render frame says which call made it wait; with the environment
+	// variable HACCO_LOG_RS_SYNCS set, the first main-thread wait in every function too, however short.
 	static void _note_main_thread_sync(const char *p_function);
 #endif
 

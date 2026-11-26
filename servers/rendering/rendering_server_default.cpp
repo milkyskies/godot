@@ -472,14 +472,14 @@ void RenderingServerDefault::_note_main_thread_sync(const char *p_function) {
 		return;
 	}
 	// Main thread only, so no lock.
+	static const bool every_first = OS::get_singleton()->has_environment("HACCO_LOG_RS_SYNCS");
 	static HashSet<String> seen;
 	const double waited_ms = CommandQueueMT::last_sync_wait_usec / 1000.0;
-	const String function = p_function;
-	if (!seen.has(function)) {
-		seen.insert(function);
-		WARN_PRINT(vformat("RenderingServer: the main thread waited for the render thread in %s, %.1f ms (its first; later ones log from 20 ms).", function, waited_ms));
-	} else if (waited_ms >= 20.0) {
-		WARN_PRINT(vformat("RenderingServer: the main thread waited %.1f ms for the render thread in %s.", waited_ms, function));
+	if (waited_ms >= 20.0) {
+		WARN_PRINT(vformat("RenderingServer: the main thread waited %.1f ms for the render thread in %s.", waited_ms, p_function));
+	} else if (every_first && !seen.has(p_function)) {
+		seen.insert(p_function);
+		WARN_PRINT(vformat("RenderingServer: the main thread waited for the render thread in %s, %.1f ms (its first).", p_function, waited_ms));
 	}
 }
 
