@@ -31,6 +31,8 @@
 #pragma once
 
 #include "core/io/resource.h"
+#include "core/object/worker_thread_pool.h"
+#include "core/templates/local_vector.h"
 #include "core/templates/self_list.h"
 #include "scene/resources/shader.h"
 #include "servers/rendering/rendering_server_enums.h"
@@ -410,6 +412,8 @@ private:
 	struct ShaderData {
 		RID shader;
 		int users = 0;
+		// Its code being built on a worker (hacco #1270): `shader` is empty until it is in.
+		bool building = false;
 	};
 
 	static HashMap<MaterialKey, ShaderData, MaterialKey> shader_map;
@@ -523,6 +527,18 @@ private:
 	static Mutex material_mutex;
 	static SelfList<BaseMaterial3D>::List dirty_materials;
 	static ShaderNames *shader_names;
+
+	// A key's shader built on a worker, not on the main thread (hacco #1270): the materials wearing it wait, drawing
+	// nothing (`waiting_shader`), until `flush_changes` finds it in. Under material_mutex.
+	struct Building;
+	static SelfList<BaseMaterial3D>::List waiting_materials;
+	static LocalVector<WorkerThreadPool::TaskID> building_tasks;
+	static RID waiting_shader;
+	SelfList<BaseMaterial3D> waiting_element;
+	static bool _build_on_worker();
+	static void _build_task(void *p_building);
+	void _wait_for_shader();
+	void _take_built_shader();
 
 	SelfList<BaseMaterial3D> element;
 

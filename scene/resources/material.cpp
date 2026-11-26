@@ -556,6 +556,70 @@ Mutex BaseMaterial3D::shader_map_mutex;
 BaseMaterial3D::ShaderNames *BaseMaterial3D::shader_names = nullptr;
 Mutex BaseMaterial3D::material_mutex;
 SelfList<BaseMaterial3D>::List BaseMaterial3D::dirty_materials;
+SelfList<BaseMaterial3D>::List BaseMaterial3D::waiting_materials;
+LocalVector<WorkerThreadPool::TaskID> BaseMaterial3D::building_tasks;
+RID BaseMaterial3D::waiting_shader;
+
+struct BaseMaterial3D::Building {
+	MaterialKey key;
+	String code;
+};
+
+// In the game, a new key's shader asked on the main thread: Godot builds a shader's code on the thread that asks
+// (`shader_create_from_code`), and a material's first draw froze the frame for its build, 0.4 to 1.4 s each.
+bool BaseMaterial3D::_build_on_worker() {
+	return !Engine::get_singleton()->is_editor_hint() && Thread::is_main_thread() && WorkerThreadPool::get_singleton() != nullptr;
+}
+
+void BaseMaterial3D::_build_task(void *p_building) {
+	Building *building = (Building *)p_building;
+	RID shader = RS::get_singleton()->shader_create_from_code(building->code);
+	{
+		MutexLock lock(shader_map_mutex);
+		ShaderData *v = shader_map.getptr(building->key);
+		if (v && v->building) {
+			v->shader = shader;
+			v->building = false;
+			shader = RID();
+		}
+	}
+	// Nothing wears it any more, or another build of the key got there first.
+	if (shader.is_valid()) {
+		RS::get_singleton()->free_rid(shader);
+	}
+	memdelete(building);
+}
+
+// This material draws nothing until its key's shader is built (`flush_changes`).
+void BaseMaterial3D::_wait_for_shader() {
+	MutexLock lock(material_mutex);
+	if (waiting_shader.is_null()) {
+		// Its vertices put outside the view: nothing is drawn, in any pass.
+		waiting_shader = RS::get_singleton()->shader_create_from_code("shader_type spatial;\nrender_mode unshaded;\nvoid vertex() {\n\tPOSITION = vec4(2.0, 2.0, 2.0, 1.0);\n}\n");
+	}
+	shader_rid = waiting_shader;
+	if (!waiting_element.in_list()) {
+		waiting_materials.add(&waiting_element);
+	}
+}
+
+// Under material_mutex: wears its key's shader if it is built, and stops waiting.
+void BaseMaterial3D::_take_built_shader() {
+	RID built;
+	{
+		MutexLock lock(shader_map_mutex);
+		ShaderData *v = shader_map.getptr(current_key);
+		if (v == nullptr || v->building) {
+			return;
+		}
+		built = v->shader;
+	}
+	waiting_materials.remove(&waiting_element);
+	shader_rid = built;
+	if (_get_material().is_valid()) {
+		RS::get_singleton()->material_set_shader(_get_material(), shader_rid);
+	}
+}
 
 void BaseMaterial3D::init_shaders() {
 	shader_names = memnew(ShaderNames);
@@ -649,6 +713,16 @@ void BaseMaterial3D::finish_shaders() {
 
 	dirty_materials.clear();
 
+	for (WorkerThreadPool::TaskID task : building_tasks) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(task);
+	}
+	building_tasks.clear();
+	waiting_materials.clear();
+	if (waiting_shader.is_valid()) {
+		RS::get_singleton()->free_rid(waiting_shader);
+		waiting_shader = RID();
+	}
+
 	memdelete(shader_names);
 	shader_names = nullptr;
 }
@@ -663,15 +737,18 @@ void BaseMaterial3D::_update_shader() {
 		return; //no update required in the end
 	}
 
+	bool wait = false;
 	{
 		MutexLock lock(shader_map_mutex);
 		ShaderData *v = shader_map.getptr(current_key);
 		if (v) {
 			v->users--;
 			if (v->users == 0) {
-				// Deallocate shader which is no longer in use.
+				// Deallocate shader which is no longer in use; one still building is freed by its build.
 				shader_rid = RID();
-				RS::get_singleton()->free_rid(v->shader);
+				if (v->shader.is_valid()) {
+					RS::get_singleton()->free_rid(v->shader);
+				}
 				shader_map.erase(current_key);
 			}
 		}
@@ -680,15 +757,24 @@ void BaseMaterial3D::_update_shader() {
 
 		v = shader_map.getptr(mk);
 		if (v) {
-			shader_rid = v->shader;
 			v->users++;
-
-			if (_get_material().is_valid()) {
-				RS::get_singleton()->material_set_shader(_get_material(), shader_rid);
+			if (v->building) {
+				wait = true;
+			} else {
+				shader_rid = v->shader;
+				if (_get_material().is_valid()) {
+					RS::get_singleton()->material_set_shader(_get_material(), shader_rid);
+				}
+				return;
 			}
-
-			return;
 		}
+	}
+	if (wait) {
+		_wait_for_shader();
+		if (_get_material().is_valid()) {
+			RS::get_singleton()->material_set_shader(_get_material(), shader_rid);
+		}
+		return;
 	}
 
 	// From this point, it is possible that multiple threads requesting the same key will
@@ -2037,6 +2123,41 @@ void fragment() {)";
 
 	code += "}\n";
 
+	if (_build_on_worker()) {
+		bool first = false;
+		{
+			MutexLock lock(shader_map_mutex);
+			ShaderData *v = shader_map.getptr(mk);
+			if (v) {
+				v->users++;
+			} else {
+				ShaderData shader_data;
+				shader_data.users = 1;
+				shader_data.building = true;
+				shader_map.insert(mk, shader_data);
+				first = true;
+			}
+		}
+		if (first) {
+			Building *building = memnew(Building);
+			building->key = mk;
+			building->code = code;
+			WorkerThreadPool::TaskID task = WorkerThreadPool::get_singleton()->add_native_task(&BaseMaterial3D::_build_task, building, false, "BaseMaterial3D shader");
+			MutexLock lock(material_mutex);
+			building_tasks.push_back(task);
+		}
+		_wait_for_shader();
+		{
+			MutexLock lock(material_mutex);
+			// It may have been built meanwhile.
+			_take_built_shader();
+		}
+		if (_get_material().is_valid()) {
+			RS::get_singleton()->material_set_shader(_get_material(), shader_rid);
+		}
+		return;
+	}
+
 	// We must create the shader outside the shader_map_mutex to avoid potential deadlocks with
 	// other tasks in the WorkerThreadPool simultaneously creating materials, which
 	// may also hold the shared shader_map_mutex lock.
@@ -2096,6 +2217,23 @@ void BaseMaterial3D::flush_changes() {
 	while (SelfList<BaseMaterial3D> *E = copy.first()) {
 		E->self()->_update_shader();
 		copy.remove(E);
+	}
+
+	// The shaders built on workers: their tasks waited for once done, and the materials waiting put on them.
+	MutexLock lock(material_mutex);
+	for (uint32_t i = 0; i < building_tasks.size();) {
+		if (WorkerThreadPool::get_singleton()->is_task_completed(building_tasks[i])) {
+			WorkerThreadPool::get_singleton()->wait_for_task_completion(building_tasks[i]);
+			building_tasks.remove_at_unordered(i);
+		} else {
+			i++;
+		}
+	}
+	SelfList<BaseMaterial3D> *E = waiting_materials.first();
+	while (E) {
+		SelfList<BaseMaterial3D> *next = E->next();
+		E->self()->_take_built_shader();
+		E = next;
 	}
 }
 
@@ -3906,6 +4044,7 @@ void BaseMaterial3D::_bind_methods() {
 }
 
 BaseMaterial3D::BaseMaterial3D(bool p_orm) :
+		waiting_element(this),
 		element(this) {
 	orm = p_orm;
 	// Initialize to the same values as the shader
@@ -3987,10 +4126,18 @@ BaseMaterial3D::~BaseMaterial3D() {
 		if (shader_map.has(current_key)) {
 			shader_map[current_key].users--;
 			if (shader_map[current_key].users == 0) {
-				// Deallocate shader which is no longer in use.
-				RS::get_singleton()->free_rid(shader_map[current_key].shader);
+				// Deallocate shader which is no longer in use; one still building is freed by its build.
+				if (shader_map[current_key].shader.is_valid()) {
+					RS::get_singleton()->free_rid(shader_map[current_key].shader);
+				}
 				shader_map.erase(current_key);
 			}
+		}
+	}
+	{
+		MutexLock lock(material_mutex);
+		if (waiting_element.in_list()) {
+			waiting_materials.remove(&waiting_element);
 		}
 	}
 
