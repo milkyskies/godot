@@ -4366,11 +4366,10 @@ void RendererSceneCull::update_dirty_instances() const {
 void RendererSceneCull::update() {
 	//optimize bvhs
 
-	uint32_t rid_count = scenario_owner.get_rid_count();
-	RID *rids = (RID *)alloca(sizeof(RID) * rid_count);
-	scenario_owner.fill_owned_buffer(rids);
-	for (uint32_t i = 0; i < rid_count; i++) {
-		Scenario *s = scenario_owner.get_or_null(rids[i]);
+	// The scenarios made: one allocated on another thread whose initialization is still queued is not one yet. Counting
+	// them first and filling a buffer after walked it as made, a corrupt DynamicBVH (hacco #1482).
+	for (const RID &rid : scenario_owner.get_owned_list()) {
+		Scenario *s = scenario_owner.get_or_null(rid);
 		s->indexers[Scenario::INDEXER_GEOMETRY].optimize_incremental(indexer_update_iterations);
 		s->indexers[Scenario::INDEXER_VOLUMES].optimize_incremental(indexer_update_iterations);
 	}

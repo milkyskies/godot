@@ -378,7 +378,10 @@ public:
 		}
 		for (size_t i = 0; i < max_alloc; i++) {
 			uint64_t validator = chunks[i / elements_in_chunk][i % elements_in_chunk].validator;
-			if (validator != 0xFFFFFFFF) {
+			// Neither freed nor allocated and not yet initialized: a thread-safe owner's RID is allocated on the
+			// thread that asks and initialized later on the server's own (`FUNCRIDSPLIT`), and its data is not
+			// made until then; a list taken between handed out raw memory (hacco #1482).
+			if (!(validator & 0x80000000)) {
 				owned.push_back(_make_from_id((validator << 32) | i));
 			}
 		}
@@ -386,25 +389,6 @@ public:
 			mutex.unlock();
 		}
 		return owned;
-	}
-
-	//used for fast iteration in the elements or RIDs
-	void fill_owned_buffer(RID *p_rid_buffer) const {
-		if constexpr (THREAD_SAFE) {
-			mutex.lock();
-		}
-		uint32_t idx = 0;
-		for (size_t i = 0; i < max_alloc; i++) {
-			uint64_t validator = chunks[i / elements_in_chunk][i % elements_in_chunk].validator;
-			if (validator != 0xFFFFFFFF) {
-				p_rid_buffer[idx] = _make_from_id((validator << 32) | i);
-				idx++;
-			}
-		}
-
-		if constexpr (THREAD_SAFE) {
-			mutex.unlock();
-		}
 	}
 
 	void set_description(const char *p_description) {
@@ -501,10 +485,6 @@ public:
 		return alloc.get_owned_list();
 	}
 
-	void fill_owned_buffer(RID *p_rid_buffer) const {
-		alloc.fill_owned_buffer(p_rid_buffer);
-	}
-
 	void set_description(const char *p_description) {
 		alloc.set_description(p_description);
 	}
@@ -555,9 +535,6 @@ public:
 
 	_FORCE_INLINE_ LocalVector<RID> get_owned_list() const {
 		return alloc.get_owned_list();
-	}
-	void fill_owned_buffer(RID *p_rid_buffer) const {
-		alloc.fill_owned_buffer(p_rid_buffer);
 	}
 
 	void set_description(const char *p_description) {
