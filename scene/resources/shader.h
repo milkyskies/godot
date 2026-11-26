@@ -64,6 +64,16 @@ private:
 
 	HashMap<StringName, HashMap<int, Ref<Texture>>> default_textures;
 
+	// The uniforms of the code last set, read from that code on the thread that asks (hacco #1435): asking the
+	// rendering server waits for the render thread, which may be drawing a frame of seconds. `uniforms_code` is what
+	// is parsed when the list is first asked for; `uniforms_read` says the list is in.
+	mutable Mutex uniforms_mutex;
+	mutable String uniforms_code;
+	mutable bool uniforms_read = false;
+	mutable bool uniforms_parsed = false;
+	mutable List<PropertyInfo> uniforms;
+	bool _read_uniforms(List<PropertyInfo> *r_uniforms) const;
+
 	void _check_shader_rid() const;
 	void _dependency_changed();
 	void _recompile();

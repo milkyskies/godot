@@ -32,13 +32,16 @@
 #include "shader.compat.inc"
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/templates/sort_array.h"
 #include "scene/main/scene_tree.h"
 #include "scene/resources/texture.h"
 #include "servers/rendering/rendering_server.h"
 #include "servers/rendering/shader_language.h"
 #include "servers/rendering/shader_preprocessor.h"
+#include "servers/rendering/shader_types.h"
 
 #ifdef TOOLS_ENABLED
 #include "editor/doc/editor_help.h"
@@ -130,6 +133,14 @@ void Shader::set_code(const String &p_code) {
 		E->connect_changed(callable_mp(this, &Shader::_dependency_changed));
 	}
 
+	{
+		MutexLock lock(uniforms_mutex);
+		uniforms_code = preprocessed_code;
+		uniforms_read = false;
+		uniforms_parsed = false;
+		uniforms.clear();
+	}
+
 	if (shader_rid.is_valid()) {
 		RenderingServer::get_singleton()->shader_set_code(shader_rid, preprocessed_code);
 		preprocessed_code = String();
@@ -151,12 +162,96 @@ void Shader::inspect_native_shader_code() {
 	}
 }
 
+// A global uniform's type from the project's `shader_globals` (what the rendering server loads them from), without
+// asking the server; TYPE_VOID for one not there, and the code is then not read here (hacco #1435).
+static ShaderLanguage::DataType _project_global_uniform_type(const StringName &p_name) {
+	static const char *type_names[RSE::GLOBAL_VAR_TYPE_MAX] = {
+		"bool", "bvec2", "bvec3", "bvec4", "int", "ivec2", "ivec3", "ivec4", "rect2i", "uint", "uvec2", "uvec3", "uvec4",
+		"float", "vec2", "vec3", "vec4", "color", "rect2", "mat2", "mat3", "mat4", "transform_2d", "transform",
+		"sampler2D", "sampler2DArray", "sampler3D", "samplerCube", "samplerExternalOES"
+	};
+	const String setting = "shader_globals/" + String(p_name);
+	if (!ProjectSettings::get_singleton()->has_setting(setting)) {
+		return ShaderLanguage::TYPE_VOID;
+	}
+	const Dictionary d = GLOBAL_GET(setting);
+	const String type = d.get("type", String());
+	for (int i = 0; i < RSE::GLOBAL_VAR_TYPE_MAX; i++) {
+		if (type == type_names[i]) {
+			return (ShaderLanguage::DataType)RS::global_shader_uniform_type_get_shader_datatype(RSE::GlobalShaderParameterType(i));
+		}
+	}
+	return ShaderLanguage::TYPE_VOID;
+}
+
+// The uniforms of the code last set, as the rendering server lists them (`MaterialStorage::ShaderData::
+// get_shader_uniform_list`: the local ones in their order, a group entry where the group changes), parsed here once
+// per code; false when this code cannot be read here (no shader types yet, or it does not parse: a global uniform
+// added at run time, or an error the server reports in its own words), and the server is asked.
+bool Shader::_read_uniforms(List<PropertyInfo> *r_uniforms) const {
+	MutexLock lock(uniforms_mutex);
+	if (!uniforms_read) {
+		uniforms_read = true;
+		uniforms_parsed = false;
+		uniforms.clear();
+		ShaderTypes *types = ShaderTypes::get_singleton();
+		if (types == nullptr || uniforms_code.is_empty()) {
+			return false;
+		}
+		const RSE::ShaderMode server_mode = RSE::ShaderMode(get_mode());
+		ShaderLanguage parser;
+		ShaderLanguage::ShaderCompileInfo info;
+		info.functions = types->get_functions(server_mode);
+		info.render_modes = types->get_modes(server_mode);
+		info.stencil_modes = types->get_stencil_modes(server_mode);
+		info.shader_types = types->get_types();
+		info.global_shader_uniform_type_func = _project_global_uniform_type;
+		if (parser.compile(uniforms_code, info) != OK) {
+			return false;
+		}
+		const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &all = parser.get_shader()->uniforms;
+		SortArray<Pair<StringName, int>, ShaderLanguage::UniformOrderComparator> sorter;
+		LocalVector<Pair<StringName, int>> local;
+		for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &E : all) {
+			if (E.value.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_LOCAL) {
+				local.push_back(Pair<StringName, int>(E.key, E.value.prop_order));
+			}
+		}
+		sorter.sort(local.ptr(), local.size());
+		String last_group;
+		for (const Pair<StringName, int> &E : local) {
+			const ShaderLanguage::ShaderNode::Uniform &uniform = all[E.first];
+			if (uniform.group != last_group) {
+				PropertyInfo group;
+				group.usage = PROPERTY_USAGE_GROUP;
+				group.name = uniform.group;
+				uniforms.push_back(group);
+				last_group = uniform.group;
+			}
+			PropertyInfo pi = ShaderLanguage::uniform_to_property_info(uniform);
+			pi.name = E.first;
+			uniforms.push_back(pi);
+		}
+		uniforms_code = String();
+		uniforms_parsed = true;
+	}
+	if (!uniforms_parsed) {
+		return false;
+	}
+	for (const PropertyInfo &pi : uniforms) {
+		r_uniforms->push_back(pi);
+	}
+	return true;
+}
+
 void Shader::get_shader_uniform_list(List<PropertyInfo> *p_params, bool p_get_groups) const {
 	_update_shader();
 	_check_shader_rid();
 
 	List<PropertyInfo> local;
-	RenderingServer::get_singleton()->get_shader_parameter_list(shader_rid, &local);
+	if (!_read_uniforms(&local)) {
+		RenderingServer::get_singleton()->get_shader_parameter_list(shader_rid, &local);
+	}
 
 #ifdef TOOLS_ENABLED
 	DocData::ClassDoc class_doc;
