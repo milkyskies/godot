@@ -989,10 +989,14 @@ RID RendererViewport::viewport_allocate() {
 }
 
 void RendererViewport::viewport_initialize(RID p_rid) {
+	viewport_initialize_with_texture(p_rid, RID());
+}
+
+void RendererViewport::viewport_initialize_with_texture(RID p_rid, RID p_texture) {
 	viewport_owner.initialize_rid(p_rid);
 	Viewport *viewport = viewport_owner.get_or_null(p_rid);
 	viewport->self = p_rid;
-	viewport->render_target = RSG::texture_storage->render_target_create();
+	viewport->render_target = p_texture.is_valid() ? RSG::texture_storage->render_target_create_with_texture(p_texture) : RSG::texture_storage->render_target_create();
 	viewport->shadow_atlas = RSG::light_storage->shadow_atlas_create();
 	viewport->viewport_render_direct_to_screen = false;
 

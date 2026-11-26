@@ -95,6 +95,10 @@ class RenderingServerDefault : public RenderingServer {
 
 	void _free(RID p_rid);
 
+	// Each viewport's texture, allocated with it (`viewport_create`, hacco #1435).
+	mutable Mutex viewport_textures_mutex;
+	HashMap<RID, RID> viewport_textures;
+
 	void _call_on_render_thread(const Callable &p_callable);
 
 #ifdef DEBUG_ENABLED
@@ -739,7 +743,23 @@ public:
 
 	/* VIEWPORT TARGET API */
 
-	FUNCRIDSPLIT(viewport)
+	// A viewport's texture is allocated with it, so the thread that made it knows it at once: every Viewport node asks
+	// for it as it is made, which waited for the render thread (hacco #1435). A backend that cannot allocate it ahead
+	// (Compatibility, whose render target texture can be overridden) asks the render thread as before.
+	virtual RID viewport_create() override {
+		RID ret = RSG::viewport->viewport_allocate();
+		RID texture = RSG::texture_storage->render_target_texture_allocate();
+		if (texture.is_valid()) {
+			MutexLock lock(viewport_textures_mutex);
+			viewport_textures[ret] = texture;
+		}
+		if (ASYNC_COND_PUSH) {
+			command_queue.push(RSG::viewport, &RendererViewport::viewport_initialize_with_texture, ret, texture);
+		} else {
+			RSG::viewport->viewport_initialize_with_texture(ret, texture);
+		}
+		return ret;
+	}
 
 #ifndef XR_DISABLED
 	FUNC2(viewport_set_use_xr, RID, bool)
@@ -765,7 +785,23 @@ public:
 	FUNC1RC(RSE::ViewportUpdateMode, viewport_get_update_mode, RID)
 
 	FUNC1RC(RID, viewport_get_render_target, RID)
-	FUNC1RC(RID, viewport_get_texture, RID)
+	virtual RID viewport_get_texture(RID p_viewport) const override {
+		{
+			MutexLock lock(viewport_textures_mutex);
+			if (const RID *texture = viewport_textures.getptr(p_viewport)) {
+				return *texture;
+			}
+		}
+		if (ASYNC_COND_PUSH_AND_RET) {
+			RID ret;
+			command_queue.push_and_ret(RSG::viewport, &RendererViewport::viewport_get_texture, &ret, p_viewport);
+			SYNC_DEBUG
+			MAIN_THREAD_SYNC_CHECK
+			return ret;
+		}
+		command_queue.flush_if_pending();
+		return RSG::viewport->viewport_get_texture(p_viewport);
+	}
 
 	FUNC2(viewport_set_disable_2d, RID, bool)
 	FUNC2(viewport_set_environment_mode, RID, RSE::ViewportEnvironmentMode)
@@ -1194,6 +1230,10 @@ public:
 	/* FREE */
 
 	virtual void free_rid(RID p_rid) override {
+		{
+			MutexLock lock(viewport_textures_mutex);
+			viewport_textures.erase(p_rid);
+		}
 		if (Thread::get_caller_id() == server_thread) {
 			command_queue.flush_if_pending();
 			_free(p_rid);

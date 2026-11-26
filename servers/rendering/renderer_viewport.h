@@ -219,6 +219,9 @@ private:
 public:
 	RID viewport_allocate();
 	void viewport_initialize(RID p_rid);
+	// With its render target's texture allocated already (`RendererTextureStorage::render_target_texture_allocate`),
+	// or made here when that is RID() (hacco #1435).
+	void viewport_initialize_with_texture(RID p_rid, RID p_texture);
 
 #ifndef XR_DISABLED
 	void viewport_set_use_xr(RID p_viewport, bool p_use_xr);

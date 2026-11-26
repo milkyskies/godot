@@ -4268,10 +4268,7 @@ void TextureStorage::_update_render_target(RenderTarget *rt) {
 	if (rt->texture.is_null()) {
 		//create a placeholder until updated
 		rt->texture = texture_allocate();
-		texture_2d_placeholder_initialize(rt->texture);
-		Texture *tex = get_texture(rt->texture);
-		tex->is_render_target = true;
-		tex->path = "Render Target (Internal)";
+		_render_target_texture_initialize(rt->texture);
 	}
 
 	_clear_render_target(rt);
@@ -4414,6 +4411,29 @@ void TextureStorage::_create_render_target_backbuffer(RenderTarget *rt) {
 
 		rt->backbuffer_mipmaps.push_back(mipmap);
 	}
+}
+
+void TextureStorage::_render_target_texture_initialize(RID p_texture) {
+	texture_2d_placeholder_initialize(p_texture);
+	Texture *tex = get_texture(p_texture);
+	tex->is_render_target = true;
+	tex->path = "Render Target (Internal)";
+}
+
+RID TextureStorage::render_target_texture_allocate() {
+	return texture_allocate();
+}
+
+RID TextureStorage::render_target_create_with_texture(RID p_texture) {
+	RenderTarget render_target;
+
+	render_target.was_used = false;
+	render_target.clear_requested = false;
+	render_target.texture = p_texture;
+	_render_target_texture_initialize(p_texture);
+
+	_update_render_target(&render_target);
+	return render_target_owner.make_rid(render_target);
 }
 
 RID TextureStorage::render_target_create() {
