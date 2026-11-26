@@ -32,6 +32,7 @@
 
 STATIC_ASSERT_INCOMPLETE_TYPE(class, RenderingServer);
 
+#include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -351,6 +352,16 @@ bool GeometryInstance3D::_get(const StringName &p_name, Variant &r_ret) const {
 }
 
 void GeometryInstance3D::_get_property_list(List<PropertyInfo> *p_list) const {
+	if (!Engine::get_singleton()->is_editor_hint()) {
+		// In the game, only the parameters set on this node, from what it keeps (hacco #1435): the rendering server's
+		// list waits for the render thread, which may be drawing a frame of seconds, and every pack, duplicate and
+		// property read asks for it. Those are the ones saved and copied (an unset one is not stored); the editor's
+		// inspector still lists every parameter the materials declare.
+		for (const KeyValue<StringName, Variant> &E : instance_shader_parameters) {
+			p_list->push_back(PropertyInfo(E.value.get_type(), "instance_shader_parameters/" + String(E.key), PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE));
+		}
+		return;
+	}
 	List<PropertyInfo> pinfo;
 	RS::get_singleton()->instance_geometry_get_shader_parameter_list(get_instance(), &pinfo);
 	for (PropertyInfo &pi : pinfo) {
@@ -417,6 +428,10 @@ void GeometryInstance3D::set_instance_shader_parameter(const StringName &p_name,
 }
 
 Variant GeometryInstance3D::get_instance_shader_parameter(const StringName &p_name) const {
+	// A value set on this node is what the server holds; only an unset one, its default, is asked (hacco #1435).
+	if (const Variant *set = instance_shader_parameters.getptr(p_name)) {
+		return *set;
+	}
 	return RS::get_singleton()->instance_geometry_get_shader_parameter(get_instance(), p_name);
 }
 
