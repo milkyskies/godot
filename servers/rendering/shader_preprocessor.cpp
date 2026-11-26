@@ -1363,6 +1363,10 @@ Error ShaderPreprocessor::preprocess(const String &p_code, const String &p_filen
 		insert_builtin_define("RENDERER_COMPATIBILITY", _MKSTR(0), pp_state);
 		insert_builtin_define("RENDERER_MOBILE", _MKSTR(1), pp_state);
 		insert_builtin_define("RENDERER_FORWARD_PLUS", _MKSTR(2), pp_state);
+
+		// hacco #1434: what this Godot's shader language adds, so a shader can still build on a standard Godot.
+		insert_builtin_define("FEATURE_SPECIALIZATION_CONSTANT", _MKSTR(1), pp_state);
+		insert_builtin_define("FEATURE_IN_DEPTH_PASS", _MKSTR(1), pp_state);
 	}
 
 	Error err = preprocess(&pp_state, p_code, r_result);
