@@ -28,6 +28,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>  // required for OutputDebugString()
+#include <cwchar>      // Godot (hacco #1485): swprintf_s, which MinGW's windows.h does not declare.
 #endif                // #ifdef _WIN32
 
 static ffxMessageCallback s_messageCallback;
