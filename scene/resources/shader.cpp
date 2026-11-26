@@ -139,6 +139,7 @@ void Shader::set_code(const String &p_code) {
 		uniforms_read = false;
 		uniforms_parsed = false;
 		uniforms.clear();
+		uniform_defaults.clear();
 	}
 
 	if (shader_rid.is_valid()) {
@@ -194,6 +195,7 @@ bool Shader::_read_uniforms(List<PropertyInfo> *r_uniforms) const {
 		uniforms_read = true;
 		uniforms_parsed = false;
 		uniforms.clear();
+		uniform_defaults.clear();
 		ShaderTypes *types = ShaderTypes::get_singleton();
 		if (types == nullptr || uniforms_code.is_empty()) {
 			return false;
@@ -213,6 +215,9 @@ bool Shader::_read_uniforms(List<PropertyInfo> *r_uniforms) const {
 		SortArray<Pair<StringName, int>, ShaderLanguage::UniformOrderComparator> sorter;
 		LocalVector<Pair<StringName, int>> local;
 		for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &E : all) {
+			// `MaterialStorage::ShaderData::get_default_parameter`'s value, for every uniform.
+			const ShaderLanguage::ShaderNode::Uniform &u = E.value;
+			uniform_defaults[E.key] = u.default_value.is_empty() ? ShaderLanguage::get_default_datatype_value(u.type, u.array_size, u.hint) : ShaderLanguage::constant_value_to_variant(u.default_value, u.type, u.array_size, u.hint);
 			if (E.value.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_LOCAL) {
 				local.push_back(Pair<StringName, int>(E.key, E.value.prop_order));
 			}
@@ -356,6 +361,18 @@ bool Shader::is_text_shader() const {
 
 void Shader::_update_shader() const {
 	// Base implementation does nothing.
+}
+
+Variant Shader::get_parameter_default(const StringName &p_name) const {
+	_update_shader();
+	_check_shader_rid();
+	List<PropertyInfo> unused;
+	if (_read_uniforms(&unused)) {
+		MutexLock lock(uniforms_mutex);
+		const Variant *value = uniform_defaults.getptr(p_name);
+		return value ? *value : Variant();
+	}
+	return RenderingServer::get_singleton()->shader_get_parameter_default(get_rid(), p_name);
 }
 
 Array Shader::_get_shader_uniform_list(bool p_get_groups) {

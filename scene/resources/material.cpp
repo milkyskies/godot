@@ -340,7 +340,7 @@ void ShaderMaterial::_get_property_list(List<PropertyInfo> *p_list) const {
 			info.name = "shader_parameter/" + info.name;
 			if (!is_uniform_cached || !is_uniform_type_compatible) {
 				// Property has never been edited or its type changed, retrieve with default value.
-				Variant default_value = RenderingServer::get_singleton()->shader_get_parameter_default(shader->get_rid(), pi.name);
+				Variant default_value = shader->get_parameter_default(pi.name);
 				param_cache.insert(pi.name, default_value);
 				remap_cache.insert(info.name, pi.name);
 			}
@@ -371,7 +371,7 @@ bool ShaderMaterial::_property_get_revert(const StringName &p_name, Variant &r_p
 	if (shader.is_valid()) {
 		const StringName *pr = remap_cache.getptr(p_name);
 		if (pr) {
-			r_property = RenderingServer::get_singleton()->shader_get_parameter_default(shader->get_rid(), *pr);
+			r_property = shader->get_parameter_default(*pr);
 			return true;
 		} else if (p_name == "render_priority") {
 			r_property = 0;

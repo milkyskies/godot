@@ -72,6 +72,7 @@ private:
 	mutable bool uniforms_read = false;
 	mutable bool uniforms_parsed = false;
 	mutable List<PropertyInfo> uniforms;
+	mutable HashMap<StringName, Variant> uniform_defaults;
 	bool _read_uniforms(List<PropertyInfo> *r_uniforms) const;
 
 	void _check_shader_rid() const;
@@ -102,6 +103,9 @@ public:
 	void inspect_native_shader_code();
 
 	void get_shader_uniform_list(List<PropertyInfo> *p_params, bool p_get_groups = false) const;
+	// A uniform's default value, as the rendering server gives it, from this shader's own code when it reads here
+	// (hacco #1435).
+	Variant get_parameter_default(const StringName &p_name) const;
 
 	void set_default_texture_parameter(const StringName &p_name, const Ref<Texture> &p_texture, int p_index = 0);
 	Ref<Texture> get_default_texture_parameter(const StringName &p_name, int p_index = 0) const;
