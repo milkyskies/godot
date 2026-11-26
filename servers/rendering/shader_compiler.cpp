@@ -981,6 +981,9 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 						} else {
 							//regular uniform, index from UBO
 							code = actions.base_uniform_string + _mkid(vnode->name);
+							if (u.specialization && !p_default_actions.specialization_constant_macro.is_empty()) {
+								code = p_default_actions.specialization_constant_macro + "(" + itos(u.specialization_bit) + "u, " + code + ")";
+							}
 						}
 					}
 

@@ -219,6 +219,7 @@ const char *ShaderLanguage::token_names[TK_MAX] = {
 	"HINT_RANGE",
 	"HINT_ENUM",
 	"HINT_INSTANCE_INDEX",
+	"HINT_SPECIALIZATION_CONSTANT",
 	"HINT_SCREEN_TEXTURE",
 	"HINT_NORMAL_ROUGHNESS_TEXTURE",
 	"HINT_DEPTH_TEXTURE",
@@ -380,6 +381,7 @@ const ShaderLanguage::KeyWord ShaderLanguage::keyword_list[] = {
 	{ TK_HINT_RANGE, "hint_range", CF_UNSPECIFIED, {}, {} },
 	{ TK_HINT_ENUM, "hint_enum", CF_UNSPECIFIED, {}, {} },
 	{ TK_HINT_INSTANCE_INDEX, "instance_index", CF_UNSPECIFIED, {}, {} },
+	{ TK_HINT_SPECIALIZATION_CONSTANT, "specialization_constant", CF_UNSPECIFIED, {}, {} },
 
 	// sampler hints
 
@@ -9266,6 +9268,7 @@ Error ShaderLanguage::_parse_shader(const HashMap<StringName, FunctionInfo> &p_f
 	int uniforms = 0;
 	int instance_index = 0;
 	int prop_index = 0;
+	int specialization_constants = 0;
 #ifdef DEBUG_ENABLED
 	uint64_t uniform_buffer_size = 0;
 	uint64_t max_uniform_buffer_size = 65536;
@@ -10012,6 +10015,26 @@ Error ShaderLanguage::_parse_shader(const HashMap<StringName, FunctionInfo> &p_f
 									}
 
 									new_hint = ShaderNode::Uniform::HINT_ENUM;
+								} break;
+								case TK_HINT_SPECIALIZATION_CONSTANT: {
+									if (type != TYPE_BOOL || uniform.array_size > 0) {
+										_set_error(vformat(RTR("'%s' is for '%s' only."), "specialization_constant", "bool"));
+										return ERR_PARSE_ERROR;
+									}
+									if (uniform_scope != ShaderNode::Uniform::SCOPE_LOCAL) {
+										_set_error(vformat(RTR("'%s' is not supported for instance or global uniforms."), "specialization_constant"));
+										return ERR_PARSE_ERROR;
+									}
+									if (uniform.specialization) {
+										_set_error(vformat(RTR("Duplicated hint: '%s'."), "specialization_constant"));
+										return ERR_PARSE_ERROR;
+									}
+									if (specialization_constants >= MAX_SPECIALIZATION_CONSTANTS) {
+										_set_error(vformat(RTR("A shader can have at most %d specialization constants."), MAX_SPECIALIZATION_CONSTANTS));
+										return ERR_PARSE_ERROR;
+									}
+									uniform.specialization = true;
+									uniform.specialization_bit = specialization_constants++;
 								} break;
 								case TK_HINT_INSTANCE_INDEX: {
 									if (custom_instance_index != -1) {

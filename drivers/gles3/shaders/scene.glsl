@@ -47,6 +47,12 @@ RENDER_MOTION_VECTORS = false
 #define M_PI 3.14159265359
 
 #define SHADER_IS_SRGB true
+// IN_DEPTH_PASS (hacco #1434): the passes that keep only depth.
+#if defined(MODE_RENDER_DEPTH) && !defined(MODE_RENDER_MATERIAL)
+#define SHADER_IN_DEPTH_PASS true
+#else
+#define SHADER_IN_DEPTH_PASS false
+#endif
 #define SHADER_SPACE_FAR -1.0
 
 #ifdef USE_MULTIVIEW
@@ -1043,6 +1049,12 @@ void main() {
 /* clang-format on */
 
 #define SHADER_IS_SRGB true
+// IN_DEPTH_PASS (hacco #1434): the passes that keep only depth.
+#if defined(MODE_RENDER_DEPTH) && !defined(MODE_RENDER_MATERIAL)
+#define SHADER_IN_DEPTH_PASS true
+#else
+#define SHADER_IN_DEPTH_PASS false
+#endif
 #define SHADER_SPACE_FAR -1.0
 
 #ifdef USE_MULTIVIEW

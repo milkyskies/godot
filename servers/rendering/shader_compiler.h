@@ -104,6 +104,10 @@ public:
 		String base_uniform_string;
 		String global_buffer_array_variable;
 		String instance_uniform_index_variable;
+		// A function-like macro the renderer's GLSL defines, `name(bit, uniform)`, reading a `specialization_constant`
+		// uniform (hacco #1434): the pipeline's constant where it is specialized, the uniform where it is not. Empty:
+		// the renderer has none, and the uniform is read as any other.
+		String specialization_constant_macro;
 		uint32_t base_varying_index = 0;
 		bool apply_luminance_multiplier = false;
 		bool check_multiview_samplers = false;

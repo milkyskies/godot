@@ -11,6 +11,12 @@
 #include "scene_forward_mobile_inc.glsl"
 
 #define SHADER_IS_SRGB false
+// IN_DEPTH_PASS (hacco #1434): the passes that keep only depth.
+#if defined(MODE_RENDER_DEPTH) && !defined(MODE_RENDER_MATERIAL)
+#define SHADER_IN_DEPTH_PASS true
+#else
+#define SHADER_IN_DEPTH_PASS false
+#endif
 #define SHADER_SPACE_FAR 0.0
 
 #ifdef SHADOW_PASS
@@ -824,6 +830,12 @@ void main() {
 #VERSION_DEFINES
 
 #define SHADER_IS_SRGB false
+// IN_DEPTH_PASS (hacco #1434): the passes that keep only depth.
+#if defined(MODE_RENDER_DEPTH) && !defined(MODE_RENDER_MATERIAL)
+#define SHADER_IN_DEPTH_PASS true
+#else
+#define SHADER_IN_DEPTH_PASS false
+#endif
 #define SHADER_SPACE_FAR 0.0
 
 #ifdef SHADOW_PASS

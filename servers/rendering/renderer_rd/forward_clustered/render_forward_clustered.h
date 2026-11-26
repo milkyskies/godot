@@ -544,6 +544,7 @@ private:
 		void *surface_shadow = nullptr;
 		RID material_uniform_set_shadow;
 		SceneShaderForwardClustered::ShaderData *shader_shadow = nullptr;
+		SceneShaderForwardClustered::MaterialData *material_shadow = nullptr;
 
 		GeometryInstanceSurfaceDataCache *next = nullptr;
 		GeometryInstanceForwardClustered *owner = nullptr;

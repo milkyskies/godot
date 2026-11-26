@@ -74,6 +74,23 @@ uint sc_packed_1() {
 
 #endif
 
+// A user shader's `specialization_constant` uniforms (hacco #1434), one bit each in the third packed constant: the
+// specialized pipeline folds them, the ubershader reads the material's uniform.
+#ifdef UBERSHADER
+#define sc_user_bool(m_bit, m_uniform) (m_uniform)
+#else
+layout(constant_id = 3) const uint pso_sc_packed_2 = 0;
+#define sc_user_bool(m_bit, m_uniform) (((pso_sc_packed_2 >> (m_bit)) & 1U) != 0U)
+#endif
+
+// IN_DEPTH_PASS (hacco #1434): true at compile time in the passes that keep only depth (the depth pre-pass and
+// shadows), so a shader can leave out the surface work nothing there reads.
+#if defined(MODE_RENDER_DEPTH) && !defined(MODE_RENDER_NORMAL_ROUGHNESS) && !defined(MODE_RENDER_MATERIAL) && !defined(MODE_RENDER_SDF)
+#define SHADER_IN_DEPTH_PASS true
+#else
+#define SHADER_IN_DEPTH_PASS false
+#endif
+
 bool sc_use_forward_gi() {
 	return ((sc_packed_0() >> 0) & 1U) != 0;
 }

@@ -131,6 +131,7 @@ public:
 			};
 		};
 
+		// A user shader's `specialization_constant` uniforms, a bit each (hacco #1434; MaterialData::user_specialization).
 		uint32_t packed_2;
 	};
 
@@ -333,6 +334,9 @@ public:
 		uint32_t index = 0;
 		RID next_pass;
 		uint8_t priority;
+		// The shader's `specialization_constant` uniforms as this material sets them, a bit each (hacco #1434): the
+		// third packed specialization constant of the pipelines it draws with.
+		uint32_t user_specialization = 0;
 		virtual void set_render_priority(int p_priority);
 		virtual void set_next_pass(RID p_pass);
 		virtual bool update_parameters(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty);

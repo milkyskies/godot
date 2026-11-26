@@ -493,6 +493,12 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 	sc.type = RD::PIPELINE_SPECIALIZATION_CONSTANT_TYPE_INT;
 	specialization_constants.push_back(sc);
 
+	// The material's `specialization_constant` uniforms (hacco #1434).
+	sc.constant_id = 3;
+	sc.int_value = p_pipeline_key.shader_specialization.packed_2;
+	sc.type = RD::PIPELINE_SPECIALIZATION_CONSTANT_TYPE_INT;
+	specialization_constants.push_back(sc);
+
 	sc = {}; // Sanitize value bits. "bool_value" only assigns 8 bits and keeps the remaining bits intact.
 	sc.constant_id = 2;
 	sc.bool_value = emulate_point_size_flag;
@@ -592,6 +598,25 @@ void SceneShaderForwardClustered::MaterialData::set_next_pass(RID p_pass) {
 }
 
 bool SceneShaderForwardClustered::MaterialData::update_parameters(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty) {
+	// The `specialization_constant` uniforms, as set or by their defaults (hacco #1434).
+	user_specialization = 0;
+	for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &E : shader_data->uniforms) {
+		const ShaderLanguage::ShaderNode::Uniform &u = E.value;
+		if (!u.specialization) {
+			continue;
+		}
+		bool on = false;
+		const Variant *value = p_parameters.getptr(E.key);
+		if (value != nullptr) {
+			on = bool(*value);
+		} else if (!u.default_value.is_empty()) {
+			on = u.default_value[0].boolean;
+		}
+		if (on) {
+			user_specialization |= 1U << u.specialization_bit;
+		}
+	}
+
 	if (shader_data->version.is_valid()) {
 		RID shader_rid = SceneShaderForwardClustered::singleton->shader.version_get_shader(shader_data->version, 0);
 
@@ -741,6 +766,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["OUTPUT_IS_SRGB"] = "SHADER_IS_SRGB";
 		actions.renames["CLIP_SPACE_FAR"] = "SHADER_SPACE_FAR";
 		actions.renames["IN_SHADOW_PASS"] = "bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_IN_SHADOW_PASS)";
+		actions.renames["IN_DEPTH_PASS"] = "SHADER_IN_DEPTH_PASS";
 		actions.renames["VIEWPORT_SIZE"] = "read_viewport_size";
 
 		actions.renames["FRAGCOORD"] = "gl_FragCoord";
@@ -901,6 +927,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.base_texture_binding_index = 1;
 		actions.texture_layout_set = RenderForwardClustered::MATERIAL_UNIFORM_SET;
 		actions.base_uniform_string = "material.";
+		actions.specialization_constant_macro = "sc_user_bool";
 		actions.base_varying_index = 15;
 
 		actions.default_filter = ShaderLanguage::FILTER_LINEAR_MIPMAP;

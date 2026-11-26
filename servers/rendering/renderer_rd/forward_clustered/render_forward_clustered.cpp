@@ -356,11 +356,14 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 
 		RID material_uniform_set;
 		void *mesh_surface;
+		// The drawn material's `specialization_constant` uniforms (hacco #1434); none for the debug draws' own.
+		uint32_t user_specialization = 0;
 
 		if (shadow_pass || p_pass_mode == PASS_MODE_DEPTH) { //regular depth pass can use these too
 			material_uniform_set = surf->material_uniform_set_shadow;
 			shader = surf->shader_shadow;
 			mesh_surface = surf->surface_shadow;
+			user_specialization = surf->material_shadow->user_specialization;
 
 		} else {
 #ifdef DEBUG_ENABLED
@@ -377,6 +380,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 #endif
 				material_uniform_set = surf->material_uniform_set;
 				shader = surf->shader;
+				user_specialization = surf->material->user_specialization;
 				surf->material->set_as_used();
 #ifdef DEBUG_ENABLED
 			}
@@ -423,6 +427,7 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		pipeline_specialization.multimesh_format_2d = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_FORMAT_2D);
 		pipeline_specialization.multimesh_has_color = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR);
 		pipeline_specialization.multimesh_has_custom_data = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA);
+		pipeline_specialization.packed_2 = user_specialization;
 
 		if constexpr (p_pass_mode == PASS_MODE_COLOR) {
 			pipeline_specialization.use_light_soft_shadows = element_info.uses_softshadow;
@@ -4256,6 +4261,7 @@ void RenderForwardClustered::_geometry_instance_add_surface_with_material(Geomet
 	//shadow
 	sdcache->shader_shadow = material_shadow->shader_data;
 	sdcache->material_uniform_set_shadow = material_shadow->uniform_set;
+	sdcache->material_shadow = material_shadow;
 
 	sdcache->surface_shadow = surface_shadow ? surface_shadow : sdcache->surface;
 

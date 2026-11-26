@@ -180,6 +180,7 @@ public:
 		TK_HINT_RANGE,
 		TK_HINT_ENUM,
 		TK_HINT_INSTANCE_INDEX,
+		TK_HINT_SPECIALIZATION_CONSTANT,
 		TK_HINT_SCREEN_TEXTURE,
 		TK_HINT_NORMAL_ROUGHNESS_TEXTURE,
 		TK_HINT_DEPTH_TEXTURE,
@@ -348,7 +349,8 @@ public:
 	};
 
 	enum {
-		MAX_INSTANCE_UNIFORM_INDICES = 16
+		MAX_INSTANCE_UNIFORM_INDICES = 16,
+		MAX_SPECIALIZATION_CONSTANTS = 32, // hacco #1434: one 32-bit pipeline specialization constant holds them.
 	};
 
 	struct VaryingFunctionNames {
@@ -710,6 +712,12 @@ public:
 			float hint_range[3];
 			PackedStringArray hint_enum_names;
 			int instance_index = 0;
+			// A bool uniform the renderer may fold into its pipelines as a specialization constant (hacco #1434):
+			// `uniform bool name : specialization_constant = false;`, set per material like any uniform. The compiler
+			// gives each one of a shader its bit; a renderer without user specialization constants reads it as a
+			// plain uniform.
+			bool specialization = false;
+			int specialization_bit = -1;
 			String group;
 
 			_FORCE_INLINE_ bool is_texture() const {
