@@ -30,6 +30,9 @@
 
 #pragma once
 
+#include "core/os/condition_variable.h"
+#include "core/os/mutex.h"
+#include "core/os/thread.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/paged_allocator.h"
 #include "core/templates/rb_map.h"
@@ -460,6 +463,8 @@ public:
 	/********************/
 
 private:
+	struct FramePacer;
+
 	struct SwapChain {
 		VkSwapchainKHR vk_swapchain = VK_NULL_HANDLE;
 		RenderingContextDriver::SurfaceID surface = RenderingContextDriver::SurfaceID();
@@ -476,6 +481,11 @@ private:
 		int pre_transform_rotation_degrees = 0;
 		uint32_t image_index = 0;
 		VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+		VkExtent2D extent = {};
+		bool can_blit_to = false; // Made with VK_IMAGE_USAGE_TRANSFER_DST_BIT, for paced presents.
+		uint32_t min_image_count = 0; // The surface's.
+		bool paced_images = false; // Made with two images more than the minimum, for paced presents.
+		FramePacer *pacer = nullptr; // Paced presents for frame generation (hacco #1441), while they run.
 #ifdef ANDROID_ENABLED
 		uint64_t refresh_duration = 0;
 #endif
@@ -495,6 +505,55 @@ public:
 	virtual bool swap_chain_get_hdr_output_supported(SwapChainID p_swap_chain) override final;
 	virtual void swap_chain_set_max_fps(SwapChainID p_swap_chain, int p_max_fps) override final;
 	virtual void swap_chain_free(SwapChainID p_swap_chain) override final;
+
+	virtual bool swap_chain_supports_paced_present(SwapChainID p_swap_chain) override final;
+	virtual Error swap_chain_present_paced(CommandQueueID p_cmd_queue, SwapChainID p_swap_chain, TextureID p_real, TextureID p_generated, SemaphoreID p_ready) override final;
+	virtual void swap_chain_paced_wait(SwapChainID p_swap_chain, uint32_t p_max_pending) override final;
+	virtual void swap_chain_paced_stop(SwapChainID p_swap_chain) override final;
+	virtual bool swap_chain_paced_is_running(SwapChainID p_swap_chain) override final;
+	virtual bool swap_chain_paced_needs_resize(SwapChainID p_swap_chain) override final;
+
+private:
+	struct FramePacer {
+		struct Job {
+			VkImage real = VK_NULL_HANDLE;
+			VkImage generated = VK_NULL_HANDLE;
+			VkExtent2D size = {};
+			VkSemaphore ready = VK_NULL_HANDLE;
+		};
+
+		RenderingDeviceDriverVulkan *driver = nullptr;
+		SwapChain *swap_chain = nullptr;
+		Queue *queue = nullptr;
+		Thread thread;
+		BinaryMutex mutex;
+		ConditionVariable cond;
+		LocalVector<Job> jobs; // Queued, oldest first.
+		uint32_t pending = 0; // Queued and being shown.
+		bool exit = false;
+		bool needs_resize = false;
+
+		VkCommandPool command_pool = VK_NULL_HANDLE;
+		VkCommandBuffer command_buffers[2] = {};
+		VkFence fences[2] = {};
+		VkSemaphore acquired[2] = {};
+
+		// The real frames' cadence, from when each was done.
+		uint64_t last_done_usec = 0;
+		double interval_usec = 16666.0;
+
+		uint64_t stats_since_usec = 0;
+		uint32_t shown = 0;
+		uint32_t generated = 0;
+		uint32_t late = 0;
+	};
+
+	static void _frame_pacer_thread(void *p_pacer);
+	void _frame_pacer_show(FramePacer *p_pacer, const FramePacer::Job &p_job);
+	bool _paced_images_short(SwapChain *p_swap_chain);
+	void _frame_pacer_stop(SwapChain *p_swap_chain);
+
+public:
 
 private:
 	/*********************/

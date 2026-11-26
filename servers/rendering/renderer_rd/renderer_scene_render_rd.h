@@ -34,6 +34,7 @@
 #include "servers/rendering/renderer_rd/effects/bokeh_dof.h"
 #include "servers/rendering/renderer_rd/effects/copy_effects.h"
 #include "servers/rendering/renderer_rd/effects/debug_effects.h"
+#include "servers/rendering/renderer_rd/effects/frame_generation.h"
 #include "servers/rendering/renderer_rd/effects/fsr.h"
 #include "servers/rendering/renderer_rd/effects/luminance.h"
 #include "servers/rendering/renderer_rd/effects/resolve.h"
@@ -67,6 +68,7 @@ protected:
 	RendererRD::SMAA *smaa = nullptr;
 	RendererRD::ToneMapper *tone_mapper = nullptr;
 	RendererRD::FSR *fsr = nullptr;
+	RendererRD::FrameGeneration *frame_generation = nullptr; // Made when a view first asks for it (hacco #1441).
 	RendererRD::VRS *vrs = nullptr;
 	RendererRD::Resolve *resolve_effects = nullptr;
 #ifdef METAL_ENABLED
@@ -243,6 +245,9 @@ public:
 	virtual RD::DataFormat _render_buffers_get_preferred_color_format();
 	virtual bool _render_buffers_can_be_storage();
 	virtual Ref<RenderSceneBuffers> render_buffers_create() override;
+
+	virtual void frame_generation_prepare(const Ref<RenderSceneBuffers> &p_render_buffers) override;
+	virtual RID frame_generation_generate(const Ref<RenderSceneBuffers> &p_render_buffers) override;
 	virtual void gi_set_use_half_resolution(bool p_enable) override;
 
 	RID render_buffers_get_default_voxel_gi_buffer();

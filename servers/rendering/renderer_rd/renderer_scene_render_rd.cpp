@@ -1502,6 +1502,124 @@ void RendererSceneRenderRD::render_scene(const Ref<RenderSceneBuffers> &p_render
 
 	//calls _pre_opaque_render between depth pre-pass and opaque pass
 	_render_scene(&render_data, clear_color);
+
+	if (rb->get_frame_generation() && p_reflection_probe.is_null()) {
+		RenderSceneBuffersRD::FrameGenerationCamera &camera = rb->frame_generation_camera;
+		const Projection &projection = scene_data.cam_projection;
+		real_t fov = projection.get_fov();
+		camera.fov_y = Math::deg_to_rad(projection.get_fovy(fov, 1.0 / projection.get_aspect()));
+		camera.z_near = scene_data.z_near;
+		camera.z_far = scene_data.z_far;
+		camera.jitter = scene_data.taa_jitter * Vector2(rb->get_internal_size()) * 0.5f;
+		camera.delta_ms = float(time_step * 1000.0);
+		camera.transform = scene_data.cam_transform;
+		camera.drawn = true;
+	}
+}
+
+namespace {
+
+// A view's frame generation context, freed with its buffers' sizes (hacco #1441).
+class FrameGenerationBuffers : public RenderBufferCustomDataRD {
+	GDSOFTCLASS(FrameGenerationBuffers, RenderBufferCustomDataRD);
+
+public:
+	RendererRD::FrameGeneration *effect = nullptr;
+	RendererRD::FrameGeneration::Context *context = nullptr;
+	Size2i render_size;
+	Size2i display_size;
+	RD::DataFormat format = RD::DATA_FORMAT_MAX;
+	Transform3D last_camera;
+	bool has_last_camera = false;
+
+	virtual void configure(RenderSceneBuffersRD *p_render_buffers) override {}
+	virtual void free_data() override {
+		if (context) {
+			effect->context_free(context);
+			context = nullptr;
+		}
+		has_last_camera = false;
+	}
+	~FrameGenerationBuffers() {
+		free_data();
+	}
+};
+
+
+} // namespace
+
+void RendererSceneRenderRD::frame_generation_prepare(const Ref<RenderSceneBuffers> &p_render_buffers) {
+	Ref<RenderSceneBuffersRD> rb = p_render_buffers;
+	if (rb.is_null() || !rb->get_frame_generation() || !rb->frame_generation_camera.drawn || rb->get_view_count() != 1) {
+		return;
+	}
+	rb->frame_generation_camera.drawn = false;
+	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
+	RID color = texture_storage->render_target_get_rd_texture(rb->get_render_target());
+	if (color.is_null() || !rb->has_velocity_buffer(false)) {
+		return;
+	}
+
+	if (!frame_generation) {
+		frame_generation = memnew(RendererRD::FrameGeneration);
+	}
+	Ref<FrameGenerationBuffers> buffers;
+	if (rb->has_custom_data(SNAME("frame_generation"))) {
+		buffers = rb->get_custom_data(SNAME("frame_generation"));
+	} else {
+		buffers.instantiate();
+		buffers->effect = frame_generation;
+		rb->set_custom_data(SNAME("frame_generation"), buffers);
+	}
+
+	RD::DataFormat format = RD::get_singleton()->texture_get_format(color).format;
+	Size2i display_size = rb->get_target_size();
+	Size2i render_size = rb->get_internal_size();
+	if (buffers->context && (buffers->render_size != render_size || buffers->display_size != display_size || buffers->format != format)) {
+		buffers->free_data();
+	}
+	if (!buffers->context) {
+		buffers->context = frame_generation->context_create(render_size, display_size, format);
+		buffers->render_size = render_size;
+		buffers->display_size = display_size;
+		buffers->format = format;
+		if (!buffers->context) {
+			return;
+		}
+	}
+
+	// A cut (a teleport, a turn faster than any player's) is no motion to meet halfway.
+	const RenderSceneBuffersRD::FrameGenerationCamera &camera = rb->frame_generation_camera;
+	if (buffers->has_last_camera) {
+		real_t moved = camera.transform.origin.distance_to(buffers->last_camera.origin);
+		real_t turned = camera.transform.basis.get_column(2).angle_to(buffers->last_camera.basis.get_column(2));
+		if (moved > 50.0 || turned > Math::deg_to_rad(90.0)) {
+			frame_generation->reset(buffers->context);
+		}
+	}
+	buffers->last_camera = camera.transform;
+	buffers->has_last_camera = true;
+
+	RendererRD::FrameGeneration::Camera fg_camera;
+	fg_camera.z_near = camera.z_near;
+	fg_camera.z_far = camera.z_far;
+	fg_camera.fov_y = camera.fov_y;
+	fg_camera.jitter = camera.jitter;
+	fg_camera.delta_ms = camera.delta_ms;
+	frame_generation->prepare(buffers->context, rb->get_depth_texture(), rb->get_velocity_buffer(false), color, fg_camera);
+}
+
+RID RendererSceneRenderRD::frame_generation_generate(const Ref<RenderSceneBuffers> &p_render_buffers) {
+	Ref<RenderSceneBuffersRD> rb = p_render_buffers;
+	if (rb.is_null() || !rb->get_frame_generation() || !frame_generation || !rb->has_custom_data(SNAME("frame_generation"))) {
+		return RID();
+	}
+	Ref<FrameGenerationBuffers> buffers = rb->get_custom_data(SNAME("frame_generation"));
+	if (buffers.is_null() || !buffers->context) {
+		return RID();
+	}
+	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
+	return frame_generation->generate(buffers->context, texture_storage->render_target_get_rd_texture(rb->get_render_target()));
 }
 
 void RendererSceneRenderRD::render_material(const Transform3D &p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, const PagedArray<RenderGeometryInstance *> &p_instances, RID p_framebuffer, const Rect2i &p_region) {
@@ -1912,6 +2030,9 @@ RendererSceneRenderRD::~RendererSceneRenderRD() {
 	}
 	if (fsr) {
 		memdelete(fsr);
+	}
+	if (frame_generation) {
+		memdelete(frame_generation);
 	}
 #ifdef METAL_ENABLED
 	if (mfx_spatial) {

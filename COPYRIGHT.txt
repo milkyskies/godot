@@ -201,6 +201,11 @@ Comment: AMD FidelityFX Super Resolution 2
 Copyright: 2022-2023, Advanced Micro Devices, Inc.
 License: Expat
 
+Files: thirdparty/amd-fidelityfx/*
+Comment: AMD FidelityFX SDK (FSR 3 frame interpolation and optical flow)
+Copyright: 2023-2025, Advanced Micro Devices, Inc.
+License: Expat
+
 Files: thirdparty/angle/*
 Comment: ANGLE
 Copyright: 2018, The ANGLE Project Authors.

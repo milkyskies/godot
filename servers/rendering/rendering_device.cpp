@@ -5398,6 +5398,12 @@ Error RenderingDevice::screen_prepare_for_drawing(DisplayServerEnums::WindowID p
 	// Erase the framebuffer corresponding to this screen from the map in case any of the operations fail.
 	screen_framebuffers.erase(p_screen);
 
+	// The screen was shown through paced presents (frame generation): what they queued is shown, then the swap chain
+	// is this frame's again (hacco #1441).
+	if (driver->swap_chain_paced_is_running(it->value)) {
+		driver->swap_chain_paced_stop(it->value);
+	}
+
 	// If this frame has already queued this swap chain for presentation, we present it and remove it from the pending list.
 	uint32_t to_present_index = 0;
 	while (to_present_index < frames[frame].swap_chains_to_present.size()) {
@@ -5501,6 +5507,101 @@ bool RenderingDevice::screen_get_hdr_output_supported(DisplayServerEnums::Window
 	return driver->swap_chain_get_hdr_output_supported(it->value);
 }
 
+Error RenderingDevice::screen_present_paced(DisplayServerEnums::WindowID p_screen, RID p_real, RID p_generated) {
+	_THREAD_SAFE_METHOD_
+
+	HashMap<DisplayServerEnums::WindowID, RDD::SwapChainID>::ConstIterator it = screen_swap_chains.find(p_screen);
+	ERR_FAIL_COND_V_MSG(it == screen_swap_chains.end(), ERR_CANT_CREATE, "A swap chain was not created for the screen.");
+	const RDD::SwapChainID swap_chain = it->value;
+	if (main_queue != present_queue) {
+		return ERR_UNAVAILABLE; // The pacing thread presents on the queue the frame ran on.
+	}
+
+	// Read now: making textures below may move the ones the owner holds.
+	const Texture *real = texture_owner.get_or_null(p_real);
+	ERR_FAIL_NULL_V(real, ERR_INVALID_PARAMETER);
+	const Size2i size(real->width, real->height);
+	const DataFormat format = real->format;
+	const Texture *generated_texture = texture_owner.get_or_null(p_generated);
+	const bool generated = generated_texture && generated_texture->width == uint32_t(size.x) && generated_texture->height == uint32_t(size.y) && generated_texture->format == format;
+
+	// Out of date or resized: the pacing thread gives the swap chain back, and it is made again for the window.
+	RenderingContextDriver::SurfaceID surface = context->surface_get_from_window(p_screen);
+	if (driver->swap_chain_paced_needs_resize(swap_chain) || (surface && context->surface_get_needs_resize(surface))) {
+		driver->swap_chain_paced_stop(swap_chain);
+		_flush_and_stall_for_all_frames();
+		Error err = driver->swap_chain_resize(main_queue, swap_chain, _get_swap_chain_desired_count());
+		if (err != OK) {
+			return err; // Minimized: nothing is shown, as when drawing to it.
+		}
+	}
+	if (!driver->swap_chain_supports_paced_present(swap_chain)) {
+		return ERR_UNAVAILABLE;
+	}
+
+	PacedScreen &paced = paced_screens[p_screen];
+	if (paced.size != size || paced.format != format) {
+		driver->swap_chain_paced_wait(swap_chain, 0);
+		for (uint32_t i = 0; i < PACED_SLOTS; i++) {
+			if (paced.real[i].is_valid()) {
+				free_rid(paced.real[i]);
+				free_rid(paced.generated[i]);
+			}
+			TextureFormat tf;
+			tf.format = format;
+			tf.width = size.x;
+			tf.height = size.y;
+			tf.usage_bits = TEXTURE_USAGE_CAN_COPY_TO_BIT | TEXTURE_USAGE_CAN_COPY_FROM_BIT | TEXTURE_USAGE_SAMPLING_BIT;
+			paced.real[i] = texture_create(tf, TextureView());
+			paced.generated[i] = texture_create(tf, TextureView());
+			set_resource_name(paced.real[i], "Paced present: real frame");
+			set_resource_name(paced.generated[i], "Paced present: generated frame");
+			if (!paced.ready[i]) {
+				paced.ready[i] = driver->semaphore_create();
+			}
+		}
+		paced.size = size;
+		paced.format = format;
+	}
+
+	// The slot is written again only once the pacing thread showed what it held.
+	driver->swap_chain_paced_wait(swap_chain, PACED_SLOTS - 1);
+	const uint32_t slot = paced.next;
+	paced.next = (paced.next + 1) % PACED_SLOTS;
+
+	// A copy leaves each in the copy-destination layout, the one the pacing thread blits from and leaves them in.
+	const Vector3 extent(size.x, size.y, 1);
+	texture_copy(p_real, paced.real[slot], Vector3(), Vector3(), extent, 0, 0, 0, 0);
+	if (generated) {
+		texture_copy(p_generated, paced.generated[slot], Vector3(), Vector3(), extent, 0, 0, 0, 0);
+	}
+
+	Frame::PacedPresent present;
+	present.swap_chain = swap_chain;
+	present.real = texture_owner.get_or_null(paced.real[slot])->driver_id;
+	present.generated = generated ? texture_owner.get_or_null(paced.generated[slot])->driver_id : RDD::TextureID();
+	present.ready = paced.ready[slot];
+	frames[frame].paced_presents.push_back(present);
+	return OK;
+}
+
+void RenderingDevice::_paced_screen_free(DisplayServerEnums::WindowID p_screen) {
+	PacedScreen *paced = paced_screens.getptr(p_screen);
+	if (!paced) {
+		return;
+	}
+	for (uint32_t i = 0; i < PACED_SLOTS; i++) {
+		if (paced->real[i].is_valid()) {
+			free_rid(paced->real[i]);
+			free_rid(paced->generated[i]);
+		}
+		if (paced->ready[i]) {
+			driver->semaphore_free(paced->ready[i]);
+		}
+	}
+	paced_screens.erase(p_screen);
+}
+
 Error RenderingDevice::screen_free(DisplayServerEnums::WindowID p_screen) {
 	_THREAD_SAFE_METHOD_
 
@@ -5513,6 +5614,7 @@ Error RenderingDevice::screen_free(DisplayServerEnums::WindowID p_screen) {
 	const DisplayServerEnums::WindowID screen = it->key;
 	const RDD::SwapChainID swap_chain = it->value;
 	driver->swap_chain_free(swap_chain);
+	_paced_screen_free(screen);
 	screen_framebuffers.erase(screen);
 	screen_swap_chains.erase(screen);
 
@@ -8162,6 +8264,16 @@ void RenderingDevice::execute_chained_cmds(bool p_present_swap_chain, RenderingD
 	thread_local LocalVector<RDD::SemaphoreID> wait_semaphores;
 	wait_semaphores = frames[frame].semaphores_to_wait_on;
 
+	// The last submit also signals each paced present's semaphore, which its pacing thread waits on (hacco #1441).
+	thread_local LocalVector<RDD::SemaphoreID> last_signals;
+	last_signals.clear();
+	if (p_dst_draw_semaphore_to_signal) {
+		last_signals.push_back(p_dst_draw_semaphore_to_signal);
+	}
+	for (const Frame::PacedPresent &present : frames[frame].paced_presents) {
+		last_signals.push_back(present.ready);
+	}
+
 	for (uint32_t i = 0; i < command_buffer_count; i++) {
 		RDD::CommandBufferID command_buffer;
 		RDD::SemaphoreID signal_semaphore;
@@ -8186,8 +8298,9 @@ void RenderingDevice::execute_chained_cmds(bool p_present_swap_chain, RenderingD
 			// Semaphores always need to be signaled if it's not the last command buffer.
 		}
 
+		const bool is_last = i == (command_buffer_count - 1);
 		driver->command_queue_execute_and_present(main_queue, wait_semaphores, command_buffer,
-				signal_semaphore ? signal_semaphore : VectorView<RDD::SemaphoreID>(), signal_fence,
+				is_last ? VectorView<RDD::SemaphoreID>(last_signals) : (signal_semaphore ? signal_semaphore : VectorView<RDD::SemaphoreID>()), signal_fence,
 				swap_chains);
 
 		// Make the next command buffer wait on the semaphore signaled by this one.
@@ -8214,6 +8327,11 @@ void RenderingDevice::_execute_frame(bool p_present) {
 	// Indicate the fence has been signaled so the next time the frame's contents need to be
 	// used, the CPU needs to wait on the work to be completed.
 	frames[frame].fence_signaled = true;
+
+	for (const Frame::PacedPresent &present : frames[frame].paced_presents) {
+		driver->swap_chain_present_paced(main_queue, present.swap_chain, present.real, present.generated, present.ready);
+	}
+	frames[frame].paced_presents.clear();
 
 	if (frame_can_present) {
 		if (separate_present_queue) {

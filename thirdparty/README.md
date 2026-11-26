@@ -47,6 +47,36 @@ Patches:
 - `0002-godot-fsr2-options.patch` ([GH-81197](https://github.com/godotengine/godot/pull/81197))
 
 
+## amd-fidelityfx
+
+- Upstream: https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK
+- Version: 1.1.4 (c6efa6bf7f2027b3ec94f28578bb5965eabb9e55, 2025)
+- License: MIT
+
+FSR 3 frame generation's frame interpolation and optical flow (hacco #1441). Files extracted from upstream source:
+
+- `FidelityFX/host/`: `ffx_assert.h`, `ffx_error.h`, `ffx_frameinterpolation.h`, `ffx_interface.h`, `ffx_message.h`,
+  `ffx_opticalflow.h`, `ffx_types.h`, `ffx_util.h` from `sdk/include/FidelityFX/host`
+- `FidelityFX/gpu/`: the `ffx_*.h` files and the `frameinterpolation`, `opticalflow` and `spd` folders from
+  `sdk/include/FidelityFX/gpu`, without their HLSL and CMake files (but `ffx_opticalflow_callbacks_hlsl.h`, which the
+  host code reads its constants from)
+- `FidelityFX/gpu/passes/`: the GLSL passes from `sdk/src/backends/vk/shaders/frameinterpolation` and `opticalflow`
+- `src/`: `ffx_frameinterpolation.cpp`, `ffx_frameinterpolation_private.h`, `ffx_opticalflow.cpp`,
+  `ffx_opticalflow_private.h` from `sdk/src/components`, `ffx_object_management.cpp`, `ffx_object_management.h`,
+  `ffx_message.cpp` from `sdk/src/shared`
+- `LICENSE.txt`
+
+Changes, all marked `Godot (hacco #1441)`:
+
+- every shader `#include` rewritten to its `thirdparty/amd-fidelityfx/...` path and the passes' `#version` lines
+  commented out, for Godot's shader builder (`godot/make_bindings.py` lists the passes);
+- the two contexts' sizes doubled (`wchar_t` is 4 bytes outside Windows), `src/ffx_godot_compat.h` for what MSVC
+  gives (`_countof`, `wcscpy_s`), `FFX_UNUSED` included in `ffx_message.cpp`;
+- `godot/ffx_rename.h`, included first wherever this SDK is read, renames the types it shares with `amd-fsr2`;
+- `godot/make_bindings.py` writes each pass's bindings to
+  `servers/rendering/renderer_rd/effects/frame_generation_bindings.inc`.
+
+
 ## angle
 
 - Upstream: https://chromium.googlesource.com/angle/angle/

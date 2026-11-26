@@ -21,6 +21,15 @@ thirdparty_sources = [thirdparty_dir + file for file in thirdparty_sources]
 
 env_effects.Prepend(CPPPATH=[thirdparty_dir])
 
+# FSR 3 frame generation's host code (hacco #1441). Its headers are included with their FidelityFX/ prefix, so the
+# folder can sit on the path beside FSR 2's, whose names it shares.
+ffx_dir = "#thirdparty/amd-fidelityfx/"
+ffx_sources = [
+    ffx_dir + "src/" + file
+    for file in ["ffx_frameinterpolation.cpp", "ffx_opticalflow.cpp", "ffx_object_management.cpp", "ffx_message.cpp"]
+]
+env_effects.Append(CPPPATH=[ffx_dir, ffx_dir + "src"])
+
 
 def areatex_builder(target, source, env):
     buffer = methods.get_buffer(str(source[0]))
@@ -66,6 +75,11 @@ env_effects.Append(CPPDEFINES=["FFX_GCC"])
 env_thirdparty = env_effects.Clone()
 env_thirdparty.disable_warnings()
 env_thirdparty.add_source_files(thirdparty_obj, thirdparty_sources)
+
+# Its type names, shared with FSR 2's copy, renamed in every file of it (ffx_rename.h).
+env_ffx = env_thirdparty.Clone()
+env_ffx.Append(CCFLAGS=["-include", env_ffx.File("#thirdparty/amd-fidelityfx/godot/ffx_rename.h").abspath])
+env_ffx.add_source_files(thirdparty_obj, ffx_sources)
 env.servers_sources += thirdparty_obj
 
 # Godot source files

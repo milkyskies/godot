@@ -296,6 +296,7 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 			rb_config.set_anisotropic_filtering_level(p_viewport->anisotropic_filtering_level);
 			rb_config.set_use_taa(use_taa);
 			rb_config.set_use_debanding(p_viewport->use_debanding);
+			rb_config.set_frame_generation(p_viewport->frame_generation);
 
 			p_viewport->render_buffers->configure(&rb_config);
 		}
@@ -330,6 +331,10 @@ void RendererViewport::_draw_3d(Viewport *p_viewport) {
 
 	float screen_mesh_lod_threshold = p_viewport->mesh_lod_threshold / float(p_viewport->size.width);
 	RSG::scene->render_camera(p_viewport->render_buffers, p_viewport->camera, p_viewport->scenario, p_viewport->self, p_viewport->internal_size, p_viewport->jitter_phase_count, screen_mesh_lod_threshold, p_viewport->shadow_atlas, xr_interface, p_viewport->window_output_max_value, &p_viewport->render_info);
+	if (p_viewport->frame_generation) {
+		// The scene is in the render target and no 2D yet: what the next generated frame is made from.
+		RSG::scene->frame_generation_prepare(p_viewport->render_buffers);
+	}
 
 	RENDER_TIMESTAMP("< Render 3D Scene");
 #endif // _3D_DISABLED
@@ -757,6 +762,11 @@ void RendererViewport::_draw_viewport(Viewport *p_viewport) {
 		RSG::texture_storage->render_target_do_msaa_resolve(p_viewport->render_target);
 	}
 
+	p_viewport->frame_generation_output = RID();
+	if (p_viewport->frame_generation && p_viewport->render_buffers.is_valid()) {
+		p_viewport->frame_generation_output = RSG::scene->frame_generation_generate(p_viewport->render_buffers);
+	}
+
 	if (p_viewport->measure_render_time) {
 		String rt_id = "vp_end_" + itos(p_viewport->self.get_id());
 		RSG::utilities->capture_timestamp(rt_id);
@@ -932,6 +942,8 @@ void RendererViewport::draw_viewports(bool p_swap_buffers) {
 				//copy to screen if set as such
 				RenderingServerTypes::BlitToScreen blit;
 				blit.render_target = vp->render_target;
+				blit.generated = vp->frame_generation_output;
+				blit.frame_generation = vp->frame_generation;
 				if (vp->viewport_to_screen_rect != Rect2()) {
 					blit.dst_rect = vp->viewport_to_screen_rect;
 				} else {
@@ -1123,7 +1135,7 @@ void RendererViewport::_viewport_set_size(Viewport *p_viewport, int p_width, int
 }
 
 bool RendererViewport::_viewport_requires_motion_vectors(Viewport *p_viewport) {
-	return p_viewport->use_taa ||
+	return p_viewport->use_taa || p_viewport->frame_generation ||
 			RSE::scaling_3d_mode_type(p_viewport->scaling_3d_mode) == RSE::VIEWPORT_SCALING_3D_TYPE_TEMPORAL ||
 			p_viewport->debug_draw == RSE::VIEWPORT_DEBUG_DRAW_MOTION_VECTORS || p_viewport->force_motion_vectors;
 }
@@ -1445,6 +1457,53 @@ void RendererViewport::viewport_set_screen_space_aa(RID p_viewport, RSE::Viewpor
 	}
 	viewport->screen_space_aa = p_mode;
 	_configure_3d_render_buffers(viewport);
+}
+
+void RendererViewport::viewport_set_frame_generation(RID p_viewport, bool p_enabled) {
+	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL(viewport);
+	if (OS::get_singleton()->get_current_rendering_method() != "forward_plus") {
+		WARN_PRINT_ONCE_ED("Frame generation is only available when using the Forward+ renderer.");
+		return;
+	}
+	if (viewport->frame_generation == p_enabled) {
+		return;
+	}
+
+	bool motion_vectors_before = _viewport_requires_motion_vectors(viewport);
+	viewport->frame_generation = p_enabled;
+	viewport->frame_generation_output = RID();
+	bool motion_vectors_after = _viewport_requires_motion_vectors(viewport);
+	if (motion_vectors_before != motion_vectors_after) {
+		num_viewports_with_motion_vectors += motion_vectors_after ? 1 : -1;
+	}
+
+	_configure_3d_render_buffers(viewport);
+}
+
+Ref<Image> RendererViewport::viewport_get_frame_generation_image(RID p_viewport) const {
+	const Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL_V(viewport, Ref<Image>());
+	RenderingDevice *rd = RenderingDevice::get_singleton();
+	if (!rd || viewport->frame_generation_output.is_null() || !rd->texture_is_valid(viewport->frame_generation_output)) {
+		return Ref<Image>();
+	}
+	// Shaped as the viewport's texture: the formats its render target is made in.
+	RD::TextureFormat tf = rd->texture_get_format(viewport->frame_generation_output);
+	Image::Format format;
+	switch (tf.format) {
+		case RD::DATA_FORMAT_R16G16B16A16_SFLOAT:
+			format = Image::FORMAT_RGBAH;
+			break;
+		case RD::DATA_FORMAT_R8G8B8A8_UNORM:
+			format = Image::FORMAT_RGBA8;
+			break;
+		default:
+			ERR_FAIL_V_MSG(Ref<Image>(), "The generated frame is in a format no image is made of.");
+	}
+	Vector<uint8_t> data = rd->texture_get_data(viewport->frame_generation_output, 0);
+	ERR_FAIL_COND_V(data.is_empty(), Ref<Image>());
+	return Image::create_from_data(tf.width, tf.height, false, format, data);
 }
 
 void RendererViewport::viewport_set_use_taa(RID p_viewport, bool p_use_taa) {

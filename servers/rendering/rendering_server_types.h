@@ -134,6 +134,10 @@ struct FrameProfileArea {
 
 struct BlitToScreen {
 	RID render_target;
+	// A frame generated between the last real one and this one (an RD texture shaped as the render target's), shown
+	// half a frame before it (hacco #1441); null when there is none.
+	RID generated;
+	bool frame_generation = false; // The view generates frames: show it through paced presents.
 	Rect2 src_rect = Rect2(0.0, 0.0, 1.0, 1.0);
 	Rect2i dst_rect;
 

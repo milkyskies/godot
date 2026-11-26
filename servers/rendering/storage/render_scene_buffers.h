@@ -52,6 +52,8 @@ private:
 	float texture_mipmap_bias = 0.0;
 	bool use_taa = false;
 	bool use_debanding = false;
+	// FSR 3 frame generation (hacco #1441): the view keeps its depth and motion vectors for a generated frame.
+	bool frame_generation = false;
 
 protected:
 	static void _bind_methods();
@@ -92,6 +94,9 @@ public:
 
 	bool get_use_debanding() const { return use_debanding; }
 	void set_use_debanding(bool p_use_debanding) { use_debanding = p_use_debanding; }
+
+	bool get_frame_generation() const { return frame_generation; }
+	void set_frame_generation(bool p_frame_generation) { frame_generation = p_frame_generation; }
 
 	RenderSceneBuffersConfiguration() {}
 	virtual ~RenderSceneBuffersConfiguration() {}

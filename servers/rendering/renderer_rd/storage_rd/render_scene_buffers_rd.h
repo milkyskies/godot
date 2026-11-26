@@ -96,6 +96,7 @@ private:
 	RSE::ViewportScreenSpaceAA screen_space_aa = RSE::VIEWPORT_SCREEN_SPACE_AA_DISABLED;
 	bool use_taa = false;
 	bool use_debanding = false;
+	bool frame_generation = false;
 	RD::TextureSamples texture_samples = RD::TEXTURE_SAMPLES_1;
 
 	// Named Textures
@@ -245,6 +246,19 @@ public:
 	_FORCE_INLINE_ RSE::ViewportScreenSpaceAA get_screen_space_aa() const { return screen_space_aa; }
 	_FORCE_INLINE_ bool get_use_taa() const { return use_taa; }
 	_FORCE_INLINE_ bool get_use_debanding() const { return use_debanding; }
+	_FORCE_INLINE_ bool get_frame_generation() const { return frame_generation; }
+
+	// The camera of the last scene drawn into these buffers, for frame generation (hacco #1441).
+	struct FrameGenerationCamera {
+		float z_near = 0.05f;
+		float z_far = 4000.0f;
+		float fov_y = 1.0f; // Radians.
+		Vector2 jitter; // Pixels of the internal size.
+		float delta_ms = 16.6f;
+		Transform3D transform;
+		bool drawn = false; // A scene was drawn since the last prepare.
+	};
+	FrameGenerationCamera frame_generation_camera;
 
 	uint64_t get_auto_exposure_version() const { return auto_exposure_version; }
 	void set_auto_exposure_version(const uint64_t p_auto_exposure_version) { auto_exposure_version = p_auto_exposure_version; }

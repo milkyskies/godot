@@ -1302,11 +1302,31 @@ private:
 	HashMap<DisplayServerEnums::WindowID, RDD::SwapChainID> screen_swap_chains;
 	HashMap<DisplayServerEnums::WindowID, RDD::FramebufferID> screen_framebuffers;
 
+	// A screen shown through paced presents (frame generation, hacco #1441): each frame's real and generated pictures
+	// are copied into one of two slots, which the driver's pacing thread shows from; a slot is written again only once
+	// what it held was shown.
+	static constexpr uint32_t PACED_SLOTS = 2;
+	struct PacedScreen {
+		RID real[PACED_SLOTS];
+		RID generated[PACED_SLOTS];
+		RDD::SemaphoreID ready[PACED_SLOTS];
+		Size2i size;
+		DataFormat format = DATA_FORMAT_MAX;
+		uint32_t next = 0;
+	};
+	HashMap<DisplayServerEnums::WindowID, PacedScreen> paced_screens;
+
 	uint32_t _get_swap_chain_desired_count() const;
+	void _paced_screen_free(DisplayServerEnums::WindowID p_screen);
 
 public:
 	Error screen_create(DisplayServerEnums::WindowID p_screen = DisplayServerEnums::MAIN_WINDOW_ID);
 	Error screen_prepare_for_drawing(DisplayServerEnums::WindowID p_screen = DisplayServerEnums::MAIN_WINDOW_ID);
+	// Shows this frame's `p_real` on the screen through paced presents, after `p_generated` (null when the frame has
+	// none) half a real frame before it; both are textures the size of the screen. ERR_UNAVAILABLE where the driver
+	// cannot pace: draw to the screen as usual then. The screen goes back to the usual way the next time it is
+	// prepared for drawing (hacco #1441).
+	Error screen_present_paced(DisplayServerEnums::WindowID p_screen, RID p_real, RID p_generated);
 	int screen_get_width(DisplayServerEnums::WindowID p_screen = DisplayServerEnums::MAIN_WINDOW_ID) const;
 	int screen_get_height(DisplayServerEnums::WindowID p_screen = DisplayServerEnums::MAIN_WINDOW_ID) const;
 	int screen_get_pre_rotation_degrees(DisplayServerEnums::WindowID p_screen = DisplayServerEnums::MAIN_WINDOW_ID) const;
@@ -1819,6 +1839,15 @@ private:
 
 		// Swap chains prepared for drawing during the frame that must be presented.
 		LocalVector<RDD::SwapChainID> swap_chains_to_present;
+
+		// Paced presents queued in the frame, handed to the driver once it is submitted (hacco #1441).
+		struct PacedPresent {
+			RDD::SwapChainID swap_chain;
+			RDD::TextureID real;
+			RDD::TextureID generated;
+			RDD::SemaphoreID ready;
+		};
+		LocalVector<PacedPresent> paced_presents;
 
 		// Semaphores the transfer workers can use to wait before rendering the frame.
 		// This must have the same size of the transfer worker pool.

@@ -39,18 +39,7 @@
 #include "servers/rendering/renderer_rd/forward_mobile/render_forward_mobile.h"
 #include "servers/rendering/rendering_server_types.h"
 
-void RendererCompositorRD::blit_render_targets_to_screen(DisplayServerEnums::WindowID p_screen, const RenderingServerTypes::BlitToScreen *p_render_targets, int p_amount) {
-	Error err = RD::get_singleton()->screen_prepare_for_drawing(p_screen);
-	if (err != OK) {
-		// Window is minimized and does not have valid swapchain, skip drawing without printing errors.
-		return;
-	}
-
-	BlitPipelines blit_pipelines = _get_blit_pipelines_for_format(RD::get_singleton()->screen_get_framebuffer_format(p_screen));
-
-	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin_for_screen(p_screen);
-	ERR_FAIL_COND(draw_list == RD::INVALID_ID);
-
+void RendererCompositorRD::_draw_blits(RD::DrawListID p_draw_list, const BlitPipelines &p_pipelines, DisplayServerEnums::WindowID p_screen, Size2 p_target_size, const RenderingServerTypes::BlitToScreen *p_render_targets, int p_amount, bool p_generated) {
 	const RD::ColorSpace color_space = RD::get_singleton()->screen_get_color_space(p_screen);
 	const float reference_luminance = RD::get_singleton()->get_context_driver()->window_get_hdr_output_reference_luminance(p_screen);
 	const float linear_luminance_scale = RD::get_singleton()->get_context_driver()->window_get_hdr_output_linear_luminance_scale(p_screen);
@@ -59,6 +48,10 @@ void RendererCompositorRD::blit_render_targets_to_screen(DisplayServerEnums::Win
 
 	for (int i = 0; i < p_amount; i++) {
 		RID rd_texture = texture_storage->render_target_get_rd_texture(p_render_targets[i].render_target);
+		if (p_generated && p_render_targets[i].generated.is_valid()) {
+			// The generated frame is shaped as its render target, and drawn as it would be.
+			rd_texture = p_render_targets[i].generated;
+		}
 		ERR_CONTINUE(rd_texture.is_null());
 
 		HashMap<RID, RID>::Iterator it = render_target_descriptors.find(rd_texture);
@@ -75,12 +68,12 @@ void RendererCompositorRD::blit_render_targets_to_screen(DisplayServerEnums::Win
 			it = render_target_descriptors.insert(rd_texture, uniform_set);
 		}
 
-		Size2 screen_size(RD::get_singleton()->screen_get_width(p_screen), RD::get_singleton()->screen_get_height(p_screen));
+		Size2 screen_size = p_target_size;
 		BlitMode mode = p_render_targets[i].lens_distortion.apply ? BLIT_MODE_LENS : (p_render_targets[i].multi_view.use_layer ? BLIT_MODE_USE_LAYER : BLIT_MODE_NORMAL);
 
-		RD::get_singleton()->draw_list_bind_render_pipeline(draw_list, blit_pipelines.pipelines[mode]);
-		RD::get_singleton()->draw_list_bind_index_array(draw_list, blit.array);
-		RD::get_singleton()->draw_list_bind_uniform_set(draw_list, it->value, 0);
+		RD::get_singleton()->draw_list_bind_render_pipeline(p_draw_list, p_pipelines.pipelines[mode]);
+		RD::get_singleton()->draw_list_bind_index_array(p_draw_list, blit.array);
+		RD::get_singleton()->draw_list_bind_uniform_set(p_draw_list, it->value, 0);
 
 		// We need to invert the phone rotation.
 		const int screen_rotation_degrees = -RD::get_singleton()->screen_get_pre_rotation_degrees(p_screen);
@@ -113,9 +106,106 @@ void RendererCompositorRD::blit_render_targets_to_screen(DisplayServerEnums::Win
 		blit.push_constant.reference_multiplier = reference_multiplier;
 		blit.push_constant.output_max_value = output_max_value;
 
-		RD::get_singleton()->draw_list_set_push_constant(draw_list, &blit.push_constant, sizeof(BlitPushConstant));
-		RD::get_singleton()->draw_list_draw(draw_list, true);
+		RD::get_singleton()->draw_list_set_push_constant(p_draw_list, &blit.push_constant, sizeof(BlitPushConstant));
+		RD::get_singleton()->draw_list_draw(p_draw_list, true);
 	}
+}
+
+bool RendererCompositorRD::_present_paced(DisplayServerEnums::WindowID p_screen, const RenderingServerTypes::BlitToScreen *p_render_targets, int p_amount) {
+	// Frame generation's frames are shown through paced presents (hacco #1441): the views are drawn as they would be
+	// on the window, once as they are and once with the generated frame, into 8-bit targets the pacing thread copies
+	// to the window. Only for an 8-bit sRGB window the right way up, whose blit those targets can stand in for.
+	RD *rd = RD::get_singleton();
+	bool any = false;
+	for (int i = 0; i < p_amount; i++) {
+		any = any || p_render_targets[i].frame_generation;
+	}
+	if (!any) {
+		_free_paced_targets();
+		paced_state = String();
+		return false;
+	}
+	if (rd->screen_get_color_space(p_screen) != RD::COLOR_SPACE_REC709_NONLINEAR_SRGB || rd->screen_get_pre_rotation_degrees(p_screen) != 0) {
+		_free_paced_targets();
+		_say_paced("not paced: the window is not 8-bit sRGB the right way up");
+		return false;
+	}
+
+	Size2i size(rd->screen_get_width(p_screen), rd->screen_get_height(p_screen));
+	if (size.x <= 0 || size.y <= 0) {
+		return false;
+	}
+	if (paced_targets.size != size) {
+		_free_paced_targets();
+		RD::TextureFormat tf;
+		tf.format = RD::DATA_FORMAT_R8G8B8A8_UNORM;
+		tf.width = size.x;
+		tf.height = size.y;
+		tf.usage_bits = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+		for (int i = 0; i < 2; i++) {
+			paced_targets.textures[i] = rd->texture_create(tf, RD::TextureView());
+			Vector<RID> attachments = { paced_targets.textures[i] };
+			paced_targets.framebuffers[i] = rd->framebuffer_create(attachments);
+		}
+		paced_targets.size = size;
+	}
+
+	bool generated = false;
+	for (int i = 0; i < p_amount; i++) {
+		generated = generated || p_render_targets[i].generated.is_valid();
+	}
+
+	BlitPipelines pipelines = _get_blit_pipelines_for_format(rd->framebuffer_get_format(paced_targets.framebuffers[0]));
+	for (int pass = 0; pass < (generated ? 2 : 1); pass++) {
+		Vector<Color> clear = { Color(0, 0, 0, 1) };
+		RD::DrawListID draw_list = rd->draw_list_begin(paced_targets.framebuffers[pass], RD::DRAW_CLEAR_ALL, clear);
+		_draw_blits(draw_list, pipelines, p_screen, Size2(size), p_render_targets, p_amount, pass == 1);
+		rd->draw_list_end();
+	}
+	Error err = rd->screen_present_paced(p_screen, paced_targets.textures[0], generated ? paced_targets.textures[1] : RID());
+	_say_paced(err == OK ? String("paced presents on") : vformat("not paced: the driver cannot (error %d)", int(err)));
+	return err == OK;
+}
+
+void RendererCompositorRD::_say_paced(const String &p_state) {
+	if (paced_state != p_state) {
+		paced_state = p_state;
+		print_line("Frame generation: " + p_state + ".");
+	}
+}
+
+void RendererCompositorRD::_free_paced_targets() {
+	for (int i = 0; i < 2; i++) {
+		if (paced_targets.framebuffers[i].is_valid()) {
+			RD::get_singleton()->free_rid(paced_targets.framebuffers[i]);
+			paced_targets.framebuffers[i] = RID();
+		}
+		if (paced_targets.textures[i].is_valid()) {
+			RD::get_singleton()->free_rid(paced_targets.textures[i]);
+			paced_targets.textures[i] = RID();
+		}
+	}
+	paced_targets.size = Size2i();
+}
+
+void RendererCompositorRD::blit_render_targets_to_screen(DisplayServerEnums::WindowID p_screen, const RenderingServerTypes::BlitToScreen *p_render_targets, int p_amount) {
+	if (_present_paced(p_screen, p_render_targets, p_amount)) {
+		return;
+	}
+
+	Error err = RD::get_singleton()->screen_prepare_for_drawing(p_screen);
+	if (err != OK) {
+		// Window is minimized and does not have valid swapchain, skip drawing without printing errors.
+		return;
+	}
+
+	BlitPipelines blit_pipelines = _get_blit_pipelines_for_format(RD::get_singleton()->screen_get_framebuffer_format(p_screen));
+
+	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin_for_screen(p_screen);
+	ERR_FAIL_COND(draw_list == RD::INVALID_ID);
+
+	Size2 screen_size(RD::get_singleton()->screen_get_width(p_screen), RD::get_singleton()->screen_get_height(p_screen));
+	_draw_blits(draw_list, blit_pipelines, p_screen, screen_size, p_render_targets, p_amount, false);
 
 	RD::get_singleton()->draw_list_end();
 }
@@ -171,6 +261,7 @@ void RendererCompositorRD::initialize() {
 uint64_t RendererCompositorRD::frame = 1;
 
 void RendererCompositorRD::finalize() {
+	_free_paced_targets();
 	texture_storage->_tex_blit_shader_free();
 	memdelete(scene);
 	memdelete(canvas);

@@ -171,6 +171,7 @@ void RenderSceneBuffersRD::configure(const RenderSceneBuffersConfiguration *p_co
 	anisotropic_filtering_level = p_config->get_anisotropic_filtering_level();
 	use_taa = p_config->get_use_taa();
 	use_debanding = p_config->get_use_debanding();
+	frame_generation = p_config->get_frame_generation();
 
 	ERR_FAIL_COND_MSG(view_count == 0, "Must have at least 1 view");
 
@@ -225,6 +226,7 @@ void RenderSceneBuffersRD::configure_for_reflections(const Size2i p_reflection_s
 	screen_space_aa = RSE::VIEWPORT_SCREEN_SPACE_AA_DISABLED;
 	use_taa = false;
 	use_debanding = false;
+	frame_generation = false;
 	view_count = 1;
 
 	// cleanout any old buffers we had.

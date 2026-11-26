@@ -115,6 +115,18 @@ protected:
 	static RendererCompositorRD *singleton;
 
 	BlitPipelines _get_blit_pipelines_for_format(RenderingDevice::FramebufferFormatID format);
+
+	// Frame generation's paced presents (hacco #1441): the real and the generated frame drawn for the window.
+	struct PacedTargets {
+		RID textures[2];
+		RID framebuffers[2];
+		Size2i size;
+	} paced_targets;
+	void _draw_blits(RD::DrawListID p_draw_list, const BlitPipelines &p_pipelines, DisplayServerEnums::WindowID p_screen, Size2 p_target_size, const RenderingServerTypes::BlitToScreen *p_render_targets, int p_amount, bool p_generated);
+	bool _present_paced(DisplayServerEnums::WindowID p_screen, const RenderingServerTypes::BlitToScreen *p_render_targets, int p_amount);
+	void _free_paced_targets();
+	String paced_state; // Said once each time it changes.
+	void _say_paced(const String &p_state);
 	float _compute_reference_multiplier(RD::ColorSpace p_color_space, const float p_reference_luminance, const float p_linear_luminance_scale);
 
 public:

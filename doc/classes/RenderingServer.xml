@@ -4111,6 +4111,13 @@
 				[b]Note:[/b] When GPU utilization is low enough during a certain period of time, GPUs will decrease their power state (which in turn decreases core and memory clock speeds). This can cause the reported GPU time to increase if GPU utilization is kept low enough by a framerate cap (compared to what it would be at the GPU's highest power state). Keep this in mind when benchmarking using [method viewport_get_measured_render_time_gpu]. This behavior can be overridden in the graphics driver settings at the cost of higher power usage.
 			</description>
 		</method>
+		<method name="viewport_get_frame_generation_image" qualifiers="const">
+			<return type="Image" />
+			<param index="0" name="viewport" type="RID" />
+			<description>
+				The frame last generated for the viewport (see [method viewport_set_frame_generation]), the one shown before its texture's, in the same format; [code]null[/code] when it made none (off, the first frame, a cut). Reading it waits for the GPU (hacco #1441).
+			</description>
+		</method>
 		<method name="viewport_get_render_info">
 			<return type="int" />
 			<param index="0" name="viewport" type="RID" />
@@ -4265,6 +4272,14 @@
 			<param index="1" name="mode" type="int" enum="RenderingServer.ViewportEnvironmentMode" />
 			<description>
 				Sets the viewport's environment mode which allows enabling or disabling rendering of 3D environment over 2D canvas. When disabled, 2D will not be affected by the environment. When enabled, 2D will be affected by the environment if the environment background mode is [constant ENV_BG_CANVAS]. The default behavior is to inherit the setting from the viewport's parent. If the topmost parent is also set to [constant VIEWPORT_ENVIRONMENT_INHERIT], then the behavior will be the same as if it was set to [constant VIEWPORT_ENVIRONMENT_ENABLED].
+			</description>
+		</method>
+		<method name="viewport_set_frame_generation">
+			<return type="void" />
+			<param index="0" name="viewport" type="RID" />
+			<param index="1" name="enable" type="bool" />
+			<description>
+				If [code]true[/code], a frame is generated between every two real frames of the viewport with AMD FidelityFX Super Resolution 3 frame interpolation, from its depth, motion vectors and optical flow, and the window shows each before its real frame, paced half a real frame apart. The 2D drawn over the 3D view is taken from the real frame. Forward+ on Vulkan only, for a viewport shown on a window (hacco #1441).
 			</description>
 		</method>
 		<method name="viewport_set_fsr_sharpness">

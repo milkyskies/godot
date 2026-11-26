@@ -1,0 +1,19 @@
+#!/usr/bin/env python
+from misc.utility.scons_hints import *
+
+Import("env")
+
+if "RD_GLSL" in env["BUILDERS"]:
+    # FSR 3 frame generation's passes (hacco #1441): each wraps one of the FidelityFX SDK's.
+    ffx_dir = "#thirdparty/amd-fidelityfx/FidelityFX/gpu"
+    gl_include_files = []
+    for sub in ["", "/frameinterpolation", "/opticalflow", "/spd", "/passes"]:
+        gl_include_files += [str(f) for f in Glob(ffx_dir + sub + "/*.h")]
+        gl_include_files += [str(f) for f in Glob(ffx_dir + sub + "/*.glsl")]
+
+    glsl_files = [str(f) for f in Glob("*.glsl")]
+
+    env.Depends([f + ".gen.h" for f in glsl_files], gl_include_files + ["#glsl_builders.py"])
+
+    for glsl_file in glsl_files:
+        env.RD_GLSL(glsl_file)

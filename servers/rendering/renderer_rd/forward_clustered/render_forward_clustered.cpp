@@ -1784,6 +1784,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	bool using_debug_mvs = get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_MOTION_VECTORS;
 	bool using_taa = rb->get_use_taa();
+	// Frame generation reads the view's motion vectors as TAA does (hacco #1441).
+	bool using_frame_generation = rb->get_frame_generation() && !is_reflection_probe;
 
 	enum {
 		SCALE_NONE,
@@ -1818,6 +1820,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		motion_vectors_required = true;
 	} else if (!is_reflection_probe && using_upscaling) {
 		motion_vectors_required = true;
+	} else if (using_frame_generation) {
+		motion_vectors_required = true;
 	} else {
 		motion_vectors_required = false;
 	}
@@ -1846,7 +1850,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	// (MotionVectorsStore), under TAA as under the temporal upscalers: drawing every static mesh in its motion-vector
 	// variant cost 3.5 to 4 ms a frame at 1080p (hacco #1429). Not with MSAA, whose velocity buffer is resolved from the
 	// multisampled one after this pass and would overwrite the derived motion.
-	bool using_taa_motion_pass = using_taa && !using_upscaling && !is_reflection_probe && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;
+	bool using_taa_motion_pass = (using_taa || using_frame_generation) && !using_upscaling && !is_reflection_probe && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;
 	bool using_motion_pass = rb_data.is_valid() && (using_upscaling || using_taa_motion_pass);
 
 	if (is_reflection_probe) {
@@ -2237,7 +2241,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		RD::get_singleton()->draw_command_end_label();
 
 		if (using_motion_pass) {
-			if (scale_type == SCALE_MFX || using_taa_motion_pass) {
+			// FSR 2 derives the static motion itself; frame generation reads the buffer, so it is filled for it too.
+			if (scale_type == SCALE_MFX || using_taa_motion_pass || using_frame_generation) {
 				motion_vectors_store->process(rb,
 						p_render_data->scene_data->cam_projection, p_render_data->scene_data->cam_transform,
 						p_render_data->scene_data->prev_cam_projection, p_render_data->scene_data->prev_cam_transform);
@@ -2443,7 +2448,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	RD::get_singleton()->draw_command_begin_label("Resolve");
 
 	if (rb_data.is_valid() && use_msaa) {
-		bool resolve_velocity_buffer = (using_taa || using_upscaling || ce_needs_motion_vectors) && rb->has_velocity_buffer(true);
+		bool resolve_velocity_buffer = (using_taa || using_upscaling || ce_needs_motion_vectors || using_frame_generation) && rb->has_velocity_buffer(true);
 		for (uint32_t v = 0; v < rb->get_view_count(); v++) {
 			RD::get_singleton()->texture_resolve_multisample(rb->get_color_msaa(v), rb->get_internal_texture(v));
 			resolve_effects->resolve_depth(rb->get_depth_msaa(v), rb->get_depth_texture(v), rb->get_internal_size(), texture_multisamples[msaa]);

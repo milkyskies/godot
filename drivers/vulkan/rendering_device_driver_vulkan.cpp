@@ -3743,6 +3743,9 @@ bool RenderingDeviceDriverVulkan::_determine_swap_chain_format(RenderingContextD
 }
 
 void RenderingDeviceDriverVulkan::_swap_chain_release(SwapChain *swap_chain) {
+	// Its paced presents end first: they use its images (hacco #1441).
+	_frame_pacer_stop(swap_chain);
+
 	// Destroy views and framebuffers associated to the swapchain's images.
 	for (FramebufferID framebuffer : swap_chain->framebuffers) {
 		framebuffer_free(framebuffer);
@@ -3901,6 +3904,11 @@ Error RenderingDeviceDriverVulkan::swap_chain_resize(CommandQueueID p_cmd_queue,
 
 	// Clamp the desired image count to the surface's capabilities.
 	uint32_t desired_swapchain_images = MAX(p_desired_framebuffer_count, surface_capabilities.minImageCount);
+	swap_chain->min_image_count = surface_capabilities.minImageCount;
+	if (swap_chain->paced_images) {
+		// Paced presents hold two images at once (hacco #1441).
+		desired_swapchain_images = MAX(desired_swapchain_images, surface_capabilities.minImageCount + 2);
+	}
 	if (surface_capabilities.maxImageCount > 0) {
 		// Only clamp to the max image count if it's defined. A max image count of 0 means there's no upper limit to the amount of images.
 		desired_swapchain_images = MIN(desired_swapchain_images, surface_capabilities.maxImageCount);
@@ -3949,6 +3957,12 @@ Error RenderingDeviceDriverVulkan::swap_chain_resize(CommandQueueID p_cmd_queue,
 	swap_create_info.imageExtent = extent;
 	swap_create_info.imageArrayLayers = 1;
 	swap_create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+	// Paced presents for frame generation blit into the images (hacco #1441).
+	swap_chain->can_blit_to = (surface_capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0;
+	if (swap_chain->can_blit_to) {
+		swap_create_info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	}
+	swap_chain->extent = extent;
 	swap_create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	swap_create_info.preTransform = surface_transform_bits;
 	switch (swap_create_info.preTransform) {

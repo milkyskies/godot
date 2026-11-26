@@ -494,6 +494,21 @@ public:
 	// Wait until all rendering associated to the swap chain is finished before deleting it.
 	virtual void swap_chain_free(SwapChainID p_swap_chain) = 0;
 
+	// Paced presents for frame generation (hacco #1441): a thread of the driver's own owns the swap chain and shows
+	// each frame's generated picture as soon as the frame is done, then the real one half a real frame later, each
+	// blitted from a texture the frame left in the copy-destination layout. RenderingDevice stops it before acquiring,
+	// resizing or freeing the swap chain itself.
+	virtual bool swap_chain_supports_paced_present(SwapChainID p_swap_chain) { return false; }
+	// Queues a frame: `p_ready` is signaled by the submit that wrote the textures; `p_generated` may be null.
+	virtual Error swap_chain_present_paced(CommandQueueID p_cmd_queue, SwapChainID p_swap_chain, TextureID p_real, TextureID p_generated, SemaphoreID p_ready) { return ERR_UNAVAILABLE; }
+	// Waits until at most `p_max_pending` queued frames are not yet shown.
+	virtual void swap_chain_paced_wait(SwapChainID p_swap_chain, uint32_t p_max_pending) {}
+	// Shows what is queued, then gives the swap chain back.
+	virtual void swap_chain_paced_stop(SwapChainID p_swap_chain) {}
+	virtual bool swap_chain_paced_is_running(SwapChainID p_swap_chain) { return false; }
+	// The paced thread found the swap chain out of date: it must be stopped and the swap chain resized.
+	virtual bool swap_chain_paced_needs_resize(SwapChainID p_swap_chain) { return false; }
+
 	/*********************/
 	/**** FRAMEBUFFER ****/
 	/*********************/
