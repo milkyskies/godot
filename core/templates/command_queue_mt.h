@@ -38,6 +38,8 @@
 #include "core/templates/tuple.h"
 #include "core/typedefs.h"
 
+#include <chrono>
+
 class CommandQueueMT {
 	static const size_t MAX_COMMAND_SIZE = 1024;
 
@@ -108,6 +110,13 @@ class CommandQueueMT {
 	static const uint32_t DEFAULT_COMMAND_MEM_SIZE_KB = 64;
 
 	inline static thread_local bool flushing = false;
+
+public:
+	// How long this thread's last push_and_sync or push_and_ret waited for the queue's thread, in microseconds (hacco
+	// #1435: RenderingServerDefault names each main-thread sync and its wait).
+	inline static thread_local uint64_t last_sync_wait_usec = 0;
+
+private:
 
 	BinaryMutex mutex;
 	LocalVector<uint8_t> command_mem;
@@ -216,9 +225,11 @@ class CommandQueueMT {
 	_FORCE_INLINE_ void _wait_for_sync(MutexLock<BinaryMutex> &p_lock) {
 		sync_awaiters++;
 		uint32_t sync_head_goal = sync_tail;
+		const auto waited_from = std::chrono::steady_clock::now();
 		do {
 			sync_cond_var.wait(p_lock);
 		} while (sync_head < sync_head_goal);
+		last_sync_wait_usec = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - waited_from).count();
 		sync_awaiters--;
 		_prevent_sync_wraparound();
 	}

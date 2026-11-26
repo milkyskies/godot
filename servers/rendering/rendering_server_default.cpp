@@ -33,6 +33,7 @@
 #include "core/object/callable_mp.h"
 #include "core/os/os.h"
 #include "core/profiling/profiling.h"
+#include "core/templates/hash_set.h"
 #include "servers/display/display_server.h"
 #include "servers/rendering/renderer_canvas_cull.h"
 #include "servers/rendering/renderer_scene_cull.h"
@@ -464,6 +465,25 @@ void RenderingServerDefault::pre_draw(bool p_will_draw) {
 void RenderingServerDefault::_call_on_render_thread(const Callable &p_callable) {
 	p_callable.call();
 }
+
+#ifdef DEBUG_ENABLED
+void RenderingServerDefault::_note_main_thread_sync(const char *p_function) {
+	if (!Thread::is_main_thread()) {
+		return;
+	}
+	// Main thread only, so no lock.
+	static HashSet<String> seen;
+	const double waited_ms = CommandQueueMT::last_sync_wait_usec / 1000.0;
+	const String function = p_function;
+	if (!seen.has(function)) {
+		seen.insert(function);
+		WARN_PRINT(vformat("RenderingServer: the main thread waited for the render thread in %s, %.1f ms (its first; later ones log from 20 ms).", function, waited_ms));
+	} else if (waited_ms >= 20.0) {
+		WARN_PRINT(vformat("RenderingServer: the main thread waited %.1f ms for the render thread in %s.", waited_ms, function));
+	}
+}
+
+#endif
 
 RenderingServerDefault::RenderingServerDefault(bool p_create_thread) {
 	RenderingServer::init();

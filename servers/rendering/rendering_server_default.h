@@ -97,6 +97,13 @@ class RenderingServerDefault : public RenderingServer {
 
 	void _call_on_render_thread(const Callable &p_callable);
 
+#ifdef DEBUG_ENABLED
+	// A call that waited for the render thread, named (hacco #1435): the main thread's first wait in each function is
+	// logged with how long it took, and any later one of 20 ms or more, so a frame stalled behind a long render frame
+	// says which call made it wait.
+	static void _note_main_thread_sync(const char *p_function);
+#endif
+
 public:
 	//if editor is redrawing when it shouldn't, enable this and put a breakpoint in _changes_changed()
 	//#define DEBUG_CHANGES
@@ -120,6 +127,8 @@ public:
 
 #ifdef DEBUG_SYNC
 #define SYNC_DEBUG print_line("sync on: " + String(__FUNCTION__));
+#elif defined(DEBUG_ENABLED)
+#define SYNC_DEBUG _note_main_thread_sync(__FUNCTION__);
 #else
 #define SYNC_DEBUG
 #endif
