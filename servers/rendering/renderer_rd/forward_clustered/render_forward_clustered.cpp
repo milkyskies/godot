@@ -1837,7 +1837,12 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	bool using_voxelgi = false;
 	bool reverse_cull = p_render_data->scene_data->cam_transform.basis.determinant() < 0;
 	bool using_ssil = !is_reflection_probe && p_render_data->environment.is_valid() && environment_get_ssil_enabled(p_render_data->environment);
-	bool using_motion_pass = rb_data.is_valid() && using_upscaling;
+	// Static geometry draws without motion vectors and has its motion derived from depth and the camera afterwards
+	// (MotionVectorsStore), under TAA as under the temporal upscalers: drawing every static mesh in its motion-vector
+	// variant cost 3.5 to 4 ms a frame at 1080p (hacco #1429). Not with MSAA, whose velocity buffer is resolved from the
+	// multisampled one after this pass and would overwrite the derived motion.
+	bool using_taa_motion_pass = using_taa && !using_upscaling && !is_reflection_probe && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED;
+	bool using_motion_pass = rb_data.is_valid() && (using_upscaling || using_taa_motion_pass);
 
 	if (is_reflection_probe) {
 		uint32_t resolution = light_storage->reflection_probe_instance_get_resolution(p_render_data->reflection_probe);
@@ -2227,7 +2232,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		RD::get_singleton()->draw_command_end_label();
 
 		if (using_motion_pass) {
-			if (scale_type == SCALE_MFX) {
+			if (scale_type == SCALE_MFX || using_taa_motion_pass) {
 				motion_vectors_store->process(rb,
 						p_render_data->scene_data->cam_projection, p_render_data->scene_data->cam_transform,
 						p_render_data->scene_data->prev_cam_projection, p_render_data->scene_data->prev_cam_transform);
@@ -5239,8 +5244,9 @@ RenderForwardClustered::RenderForwardClustered() {
 	taa = memnew(RendererRD::TAA);
 	fsr2_effect = memnew(RendererRD::FSR2Effect);
 	ss_effects = memnew(RendererRD::SSEffects);
-#ifdef METAL_MFXTEMPORAL_ENABLED
+	// TAA's motion pass needs it on every driver, not only MetalFX's (hacco #1429).
 	motion_vectors_store = memnew(RendererRD::MotionVectorsStore);
+#ifdef METAL_MFXTEMPORAL_ENABLED
 	mfx_temporal_effect = memnew(RendererRD::MFXTemporalEffect);
 #endif
 }
@@ -5266,12 +5272,12 @@ RenderForwardClustered::~RenderForwardClustered() {
 		memdelete(mfx_temporal_effect);
 		mfx_temporal_effect = nullptr;
 	}
+#endif
 
 	if (motion_vectors_store) {
 		memdelete(motion_vectors_store);
 		motion_vectors_store = nullptr;
 	}
-#endif
 
 	RD::get_singleton()->free_rid(shadow_sampler);
 	RSG::light_storage->directional_shadow_atlas_set_size(0);
