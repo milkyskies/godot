@@ -848,7 +848,7 @@ public:
 	bool owns_render_target(RID p_rid) const { return render_target_owner.owns(p_rid); }
 
 	virtual RID render_target_create() override;
-	virtual RID render_target_texture_allocate() override;
+	virtual RID render_target_texture_create() override;
 	virtual RID render_target_create_with_texture(RID p_texture) override;
 	void _render_target_texture_initialize(RID p_texture);
 	virtual void render_target_free(RID p_rid) override;

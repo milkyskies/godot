@@ -4420,8 +4420,10 @@ void TextureStorage::_render_target_texture_initialize(RID p_texture) {
 	tex->path = "Render Target (Internal)";
 }
 
-RID TextureStorage::render_target_texture_allocate() {
-	return texture_allocate();
+RID TextureStorage::render_target_texture_create() {
+	RID texture = texture_allocate();
+	_render_target_texture_initialize(texture);
+	return texture;
 }
 
 RID TextureStorage::render_target_create_with_texture(RID p_texture) {
@@ -4430,7 +4432,6 @@ RID TextureStorage::render_target_create_with_texture(RID p_texture) {
 	render_target.was_used = false;
 	render_target.clear_requested = false;
 	render_target.texture = p_texture;
-	_render_target_texture_initialize(p_texture);
 
 	_update_render_target(&render_target);
 	return render_target_owner.make_rid(render_target);

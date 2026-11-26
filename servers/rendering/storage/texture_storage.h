@@ -150,10 +150,11 @@ public:
 	/* RENDER TARGET */
 
 	virtual RID render_target_create() = 0;
-	// A render target whose texture's RID is allocated first, on any thread, so the viewport's texture is known to
-	// whoever made it without waiting for the render thread (hacco #1435). A backend that cannot answers RID() and
-	// the render target is made as `render_target_create` makes it.
-	virtual RID render_target_texture_allocate() { return RID(); }
+	// A render target whose texture is made first, on any thread (its placeholder, as `texture_2d_placeholder_create`
+	// makes one off the render thread), so the viewport's texture is known to whoever made it, and usable at once,
+	// without waiting for the render thread (hacco #1435). A backend that cannot answers RID() and the render target
+	// is made as `render_target_create` makes it.
+	virtual RID render_target_texture_create() { return RID(); }
 	virtual RID render_target_create_with_texture(RID p_texture) { return render_target_create(); }
 	virtual void render_target_free(RID p_rid) = 0;
 

@@ -219,7 +219,7 @@ private:
 public:
 	RID viewport_allocate();
 	void viewport_initialize(RID p_rid);
-	// With its render target's texture allocated already (`RendererTextureStorage::render_target_texture_allocate`),
+	// With its render target's texture made already (`RendererTextureStorage::render_target_texture_create`),
 	// or made here when that is RID() (hacco #1435).
 	void viewport_initialize_with_texture(RID p_rid, RID p_texture);
 

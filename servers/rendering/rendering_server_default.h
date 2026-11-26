@@ -743,12 +743,12 @@ public:
 
 	/* VIEWPORT TARGET API */
 
-	// A viewport's texture is allocated with it, so the thread that made it knows it at once: every Viewport node asks
-	// for it as it is made, which waited for the render thread (hacco #1435). A backend that cannot allocate it ahead
+	// A viewport's texture is made with it, so the thread that made it knows it at once: every Viewport node asks for
+	// it as it is made, which waited for the render thread (hacco #1435). A backend that cannot make it ahead
 	// (Compatibility, whose render target texture can be overridden) asks the render thread as before.
 	virtual RID viewport_create() override {
 		RID ret = RSG::viewport->viewport_allocate();
-		RID texture = RSG::texture_storage->render_target_texture_allocate();
+		RID texture = RSG::rasterizer->can_create_resources_async() ? RSG::texture_storage->render_target_texture_create() : RID();
 		if (texture.is_valid()) {
 			MutexLock lock(viewport_textures_mutex);
 			viewport_textures[ret] = texture;
