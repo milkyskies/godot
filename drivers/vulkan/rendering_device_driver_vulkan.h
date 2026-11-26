@@ -33,6 +33,7 @@
 #include "core/templates/hash_map.h"
 #include "core/templates/paged_allocator.h"
 #include "core/templates/rb_map.h"
+#include "core/templates/safe_refcount.h"
 #include "drivers/vulkan/rendering_context_driver_vulkan.h"
 #include "drivers/vulkan/rendering_shader_container_vulkan.h"
 #include "servers/rendering/rendering_device_driver.h"
@@ -344,10 +345,42 @@ public:
 	/****************/
 
 private:
+	// What the last submit carrying a fence waited on, kept so that a fence which does not signal can say why
+	// (hacco #1452). Copied at submit time: the swap chain may be gone by the time the wait gives up.
+	struct SubmitWaits {
+		struct Acquire {
+			uint64_t swap_chain = 0;
+			uint64_t semaphore = 0;
+			uint32_t image_index = 0;
+			uint32_t image_count = 0;
+			VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+		};
+		LocalVector<Acquire> acquires;
+		LocalVector<Acquire> presents;
+		uint32_t other_semaphores = 0;
+		uint32_t chained_submits = 0;
+		uint32_t queue_family = 0;
+		uint32_t queue_index = 0;
+		uint64_t number = 0;
+		uint64_t submitted_usec = 0;
+		VkResult present_result = VK_SUCCESS;
+		bool forced_stuck = false;
+	};
+
 	struct Fence {
 		VkFence vk_fence = VK_NULL_HANDLE;
 		CommandQueue *queue_signaled_from = nullptr;
+		SubmitWaits submit_waits;
 	};
+
+	// Each submit's number, for the line a stuck fence prints (hacco #1452).
+	SafeNumeric<uint64_t> submit_count;
+	// HACCO_FORCE_STUCK_FENCE=<n>: the n-th submit that waits on a swap chain image also waits on a semaphore nothing
+	// ever signals, so its fence never signals: the stuck-fence line, tried on purpose. 0 is off.
+	uint64_t force_stuck_acquire_submit = 0;
+	uint64_t acquire_submit_count = 0;
+	VkSemaphore force_stuck_semaphore = VK_NULL_HANDLE;
+	String _describe_submit_waits(const SubmitWaits &p_waits) const;
 
 public:
 	virtual FenceID fence_create() override final;
@@ -378,6 +411,11 @@ private:
 		LocalVector<uint32_t> pending_semaphores_for_fence;
 		LocalVector<uint32_t> free_image_semaphores;
 		LocalVector<Pair<Fence *, uint32_t>> image_semaphores_for_fences;
+		// What the submits since this queue's last fenced one waited on: a frame split into chained submits carries
+		// its fence on the last only (hacco #1452). The semaphores the last of them signaled, so a wait on one counts
+		// as the chain's, not another submit's.
+		SubmitWaits chain_waits;
+		LocalVector<uint64_t> chain_signals;
 		uint32_t queue_family = 0;
 		uint32_t queue_index = 0;
 	};
@@ -437,6 +475,7 @@ private:
 		RenderPassID render_pass;
 		int pre_transform_rotation_degrees = 0;
 		uint32_t image_index = 0;
+		VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
 #ifdef ANDROID_ENABLED
 		uint64_t refresh_duration = 0;
 #endif

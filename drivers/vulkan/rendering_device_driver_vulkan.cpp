@@ -1832,6 +1832,10 @@ Error RenderingDeviceDriverVulkan::initialize(uint32_t p_device_index, uint32_t 
 	context_device = context_driver->device_get(p_device_index);
 	physical_device = context_driver->physical_device_get(p_device_index);
 	frame_count = p_frame_count;
+	force_stuck_acquire_submit = OS::get_singleton()->get_environment("HACCO_FORCE_STUCK_FENCE").to_int();
+	if (force_stuck_acquire_submit > 0) {
+		WARN_PRINT(vformat("HACCO_FORCE_STUCK_FENCE: submit %d that waits on a swap chain image will never finish (hacco #1452).", force_stuck_acquire_submit));
+	}
 
 	// Copy the queue family properties the context already retrieved.
 	uint32_t queue_family_count = context_driver->queue_family_get_count(p_device_index);
@@ -3051,7 +3055,19 @@ Error RenderingDeviceDriverVulkan::fence_wait(FenceID p_fence) {
 	Fence *fence = (Fence *)(p_fence.id);
 	VkResult fence_status = vkGetFenceStatus(vk_device, fence->vk_fence);
 	if (fence_status == VK_NOT_READY) {
-		VkResult err = vkWaitForFences(vk_device, 1, &fence->vk_fence, VK_TRUE, UINT64_MAX);
+		// Waited in steps of 5 s: a fence that does not signal says, at each step, what its submit waited on, then the
+		// wait goes on as before (hacco #1452).
+		const uint64_t step_ns = 5'000'000'000ULL;
+		uint64_t waited_s = 0;
+		VkResult err = vkWaitForFences(vk_device, 1, &fence->vk_fence, VK_TRUE, step_ns);
+		while (err == VK_TIMEOUT) {
+			waited_s += 5;
+			ERR_PRINT(vformat("Vulkan fence not signaled after %d s: %s", waited_s, _describe_submit_waits(fence->submit_waits)));
+			err = vkWaitForFences(vk_device, 1, &fence->vk_fence, VK_TRUE, step_ns);
+		}
+		if (waited_s > 0 && err == VK_SUCCESS) {
+			ERR_PRINT(vformat("Vulkan fence of submit %d signaled after more than %d s.", fence->submit_waits.number, waited_s));
+		}
 		ERR_FAIL_COND_V_MSG(err != VK_SUCCESS, FAILED, vformat("Couldn't wait for Vulkan fence (VkResult error %d).", err));
 	}
 
@@ -3076,6 +3092,49 @@ Error RenderingDeviceDriverVulkan::fence_wait(FenceID p_fence) {
 	}
 
 	return OK;
+}
+
+static const char *_present_mode_name(VkPresentModeKHR p_mode) {
+	switch (p_mode) {
+		case VK_PRESENT_MODE_IMMEDIATE_KHR:
+			return "immediate";
+		case VK_PRESENT_MODE_MAILBOX_KHR:
+			return "mailbox";
+		case VK_PRESENT_MODE_FIFO_KHR:
+			return "fifo";
+		case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+			return "fifo relaxed";
+		default:
+			return "other";
+	}
+}
+
+String RenderingDeviceDriverVulkan::_describe_submit_waits(const SubmitWaits &p_waits) const {
+	if (p_waits.number == 0) {
+		return "no submit recorded for it.";
+	}
+	const uint64_t ago_ms = (OS::get_singleton()->get_ticks_usec() - p_waits.submitted_usec) / 1000;
+	String line = vformat("submit %d (of %d; %d ms ago, queue family %d index %d, with the %d unfenced submit(s) chained before it) waited on %d swap chain acquire semaphore(s)",
+			p_waits.number, submit_count.get(), ago_ms, p_waits.queue_family, p_waits.queue_index, p_waits.chained_submits, p_waits.acquires.size());
+	for (const SubmitWaits::Acquire &acquire : p_waits.acquires) {
+		line += vformat(" [semaphore 0x%x: swap chain 0x%x, image %d of %d, present mode %s]", acquire.semaphore, acquire.swap_chain,
+				acquire.image_index, acquire.image_count, _present_mode_name(acquire.present_mode));
+	}
+	line += vformat( " and %d semaphore(s) from other submits (transfer workers)", p_waits.other_semaphores);
+	if (p_waits.forced_stuck) {
+		line += " and the semaphore HACCO_FORCE_STUCK_FENCE never signals";
+	}
+	if (p_waits.presents.is_empty()) {
+		line += "; it presented nothing.";
+	} else {
+		line += "; it presented";
+		for (const SubmitWaits::Acquire &present : p_waits.presents) {
+			line += vformat(" [swap chain 0x%x, image %d of %d, present mode %s]", present.swap_chain, present.image_index,
+					present.image_count, _present_mode_name(present.present_mode));
+		}
+		line += vformat(", vkQueuePresentKHR gave VkResult %d (0 is success).", int(p_waits.present_result));
+	}
+	return line;
 }
 
 void RenderingDeviceDriverVulkan::fence_free(FenceID p_fence) {
@@ -3197,20 +3256,67 @@ Error RenderingDeviceDriverVulkan::command_queue_execute_and_present(CommandQueu
 	wait_semaphores.clear();
 	wait_semaphores_stages.clear();
 
+	// What this submit waits on, gathered with the rest of its chain for the fence that ends it (hacco #1452).
+	SubmitWaits &submit_waits = command_queue->chain_waits;
+	if (p_cmd_buffers.size() > 0) {
+		for (uint32_t i = 0; i < p_wait_semaphores.size(); i++) {
+			if (!command_queue->chain_signals.has(p_wait_semaphores[i].id)) {
+				submit_waits.other_semaphores++;
+			}
+		}
+	}
+
 	if (!command_queue->pending_semaphores_for_execute.is_empty()) {
 		for (uint32_t i = 0; i < command_queue->pending_semaphores_for_execute.size(); i++) {
-			VkSemaphore wait_semaphore = command_queue->image_semaphores[command_queue->pending_semaphores_for_execute[i]];
+			const uint32_t semaphore_index = command_queue->pending_semaphores_for_execute[i];
+			VkSemaphore wait_semaphore = command_queue->image_semaphores[semaphore_index];
 			wait_semaphores.push_back(wait_semaphore);
 			wait_semaphores_stages.push_back(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+
+			const SwapChain *swap_chain = command_queue->image_semaphores_swap_chains[semaphore_index];
+			SubmitWaits::Acquire acquire;
+			acquire.semaphore = uint64_t(wait_semaphore);
+			if (swap_chain != nullptr) {
+				acquire.swap_chain = uint64_t(swap_chain->vk_swapchain);
+				acquire.image_index = swap_chain->image_index;
+				acquire.image_count = swap_chain->images.size();
+				acquire.present_mode = swap_chain->present_mode;
+			}
+			if (p_cmd_buffers.size() > 0) {
+				submit_waits.acquires.push_back(acquire);
+			}
 		}
 
 		command_queue->pending_semaphores_for_execute.clear();
+
+		acquire_submit_count++;
+		if (force_stuck_acquire_submit > 0 && acquire_submit_count == force_stuck_acquire_submit && p_cmd_buffers.size() > 0) {
+			// The forced case: a semaphore nothing will ever signal.
+			VkSemaphoreCreateInfo create_info = {};
+			create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+			if (vkCreateSemaphore(vk_device, &create_info, VKC::get_allocation_callbacks(VK_OBJECT_TYPE_SEMAPHORE), &force_stuck_semaphore) == VK_SUCCESS) {
+				wait_semaphores.push_back(force_stuck_semaphore);
+				wait_semaphores_stages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+				submit_waits.forced_stuck = true;
+				ERR_PRINT("HACCO_FORCE_STUCK_FENCE: the next frame's fence waits on a semaphore nothing signals.");
+			}
+		}
 	}
 
 	for (uint32_t i = 0; i < p_wait_semaphores.size(); i++) {
 		// FIXME: Allow specifying the stage mask in more detail.
 		wait_semaphores.push_back(VkSemaphore(p_wait_semaphores[i].id));
 		wait_semaphores_stages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+	}
+
+	for (uint32_t i = 0; i < p_swap_chains.size() && p_cmd_buffers.size() > 0; i++) {
+		const SwapChain *swap_chain = (const SwapChain *)(p_swap_chains[i].id);
+		SubmitWaits::Acquire present;
+		present.swap_chain = uint64_t(swap_chain->vk_swapchain);
+		present.image_index = swap_chain->image_index;
+		present.image_count = swap_chain->images.size();
+		present.present_mode = swap_chain->present_mode;
+		submit_waits.presents.push_back(present);
 	}
 
 	if (!pending_flushes.allocations.is_empty()) {
@@ -3262,6 +3368,26 @@ Error RenderingDeviceDriverVulkan::command_queue_execute_and_present(CommandQueu
 		device_queue.submit_mutex.lock();
 		err = vkQueueSubmit(device_queue.queue, 1, &submit_info, vk_fence);
 		device_queue.submit_mutex.unlock();
+
+		command_queue->chain_signals.clear();
+		if (fence != nullptr) {
+			submit_waits.number = submit_count.increment();
+			submit_waits.submitted_usec = OS::get_singleton()->get_ticks_usec();
+			submit_waits.queue_family = command_queue->queue_family;
+			submit_waits.queue_index = command_queue->queue_index;
+			submit_waits.present_result = VK_SUCCESS;
+			fence->submit_waits = submit_waits;
+			submit_waits.acquires.clear();
+			submit_waits.presents.clear();
+			submit_waits.other_semaphores = 0;
+			submit_waits.chained_submits = 0;
+			submit_waits.forced_stuck = false;
+		} else {
+			submit_waits.chained_submits++;
+			for (uint32_t i = 0; i < p_cmd_semaphores.size(); i++) {
+				command_queue->chain_signals.push_back(p_cmd_semaphores[i].id);
+			}
+		}
 
 		if (err == VK_ERROR_DEVICE_LOST) {
 			print_lost_device_info();
@@ -3323,6 +3449,10 @@ Error RenderingDeviceDriverVulkan::command_queue_execute_and_present(CommandQueu
 #endif
 
 		device_queue.submit_mutex.unlock();
+
+		if (fence != nullptr && p_cmd_buffers.size() > 0) {
+			fence->submit_waits.present_result = err;
+		}
 
 		// Set the index to an invalid value. If any of the swap chains returned out of date, indicate it should be resized the next time it's acquired.
 		bool any_result_is_out_of_date = false;
@@ -3841,6 +3971,7 @@ Error RenderingDeviceDriverVulkan::swap_chain_resize(CommandQueueID p_cmd_queue,
 	}
 	swap_create_info.compositeAlpha = composite_alpha;
 	swap_create_info.presentMode = present_mode;
+	swap_chain->present_mode = present_mode;
 	swap_create_info.clipped = true;
 	err = device_functions.CreateSwapchainKHR(vk_device, &swap_create_info, VKC::get_allocation_callbacks(VK_OBJECT_TYPE_SWAPCHAIN_KHR), &swap_chain->vk_swapchain);
 	ERR_FAIL_COND_V_MSG(err != VK_SUCCESS, ERR_CANT_CREATE, vformat("Couldn't create Vulkan swapchain (VkResult error %d).", err));
