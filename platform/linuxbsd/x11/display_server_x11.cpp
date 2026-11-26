@@ -2571,6 +2571,7 @@ void DisplayServerX11::_update_wm_state_hints(DisplayServerEnums::WindowID p_win
 	wd.fullscreen = hints.has(fullscreen_atom);
 	wd.maximized = hints.has(maximized_horz_atom) && hints.has(maximized_vert_atom);
 	wd.minimized = hints.has(hidden_atom);
+	wd.wm_state_hidden = wd.minimized;
 }
 
 Point2i DisplayServerX11::window_get_position(DisplayServerEnums::WindowID p_window) const {
@@ -3487,16 +3488,21 @@ bool DisplayServerX11::window_is_focused(DisplayServerEnums::WindowID p_window) 
 	return wd.focused;
 }
 
+// Asked every frame (Main::iteration, OS::add_frame_delay): read the hidden state kept from PropertyNotify, not
+// window_get_mode, whose two XGetWindowProperty round trips waited 18 to 27 ms on the Xlib lock or the X server while
+// the render thread presented (hacco #1456).
 bool DisplayServerX11::window_can_draw(DisplayServerEnums::WindowID p_window) const {
-	//this seems to be all that is provided by X11
-	return window_get_mode(p_window) != DisplayServerEnums::WINDOW_MODE_MINIMIZED;
+	_THREAD_SAFE_METHOD_
+
+	ERR_FAIL_COND_V(!windows.has(p_window), false);
+	return !windows[p_window].wm_state_hidden;
 }
 
 bool DisplayServerX11::can_any_window_draw() const {
 	_THREAD_SAFE_METHOD_
 
 	for (const KeyValue<DisplayServerEnums::WindowID, WindowData> &E : windows) {
-		if (window_get_mode(E.key) != DisplayServerEnums::WINDOW_MODE_MINIMIZED) {
+		if (!E.value.wm_state_hidden) {
 			return true;
 		}
 	}

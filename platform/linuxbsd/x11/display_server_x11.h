@@ -186,6 +186,9 @@ class DisplayServerX11 : public DisplayServer {
 		bool focused = true;
 		bool minimized = false;
 		bool maximized = false;
+		// _NET_WM_STATE_HIDDEN as the window manager last set it (PropertyNotify), read by the per-frame draw checks
+		// instead of an XGetWindowProperty round trip each (hacco #1456).
+		bool wm_state_hidden = false;
 		bool is_popup = false;
 		bool layered_window = false;
 		bool mpass = false;
