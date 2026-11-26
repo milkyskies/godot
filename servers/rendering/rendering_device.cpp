@@ -4170,30 +4170,44 @@ RID RenderingDevice::shader_create_from_bytecode(const Vector<uint8_t> &p_shader
 }
 
 RID RenderingDevice::shader_create_from_bytecode_with_samplers(const Vector<uint8_t> &p_shader_binary, RID p_placeholder, const Vector<PipelineImmutableSampler> &p_immutable_samplers) {
-	_THREAD_SAFE_METHOD_
-
-	Ref<RenderingShaderContainer> shader_container = driver->get_shader_container_format().create_container();
-	ERR_FAIL_COND_V(shader_container.is_null(), RID());
-
-	bool parsed_container = shader_container->from_bytes(p_shader_binary);
-	ERR_FAIL_COND_V_MSG(!parsed_container, RID(), "Failed to parse shader container from binary.");
-
+	// Making the driver's modules (decoding, re-specializing and handing each stage to the driver) takes most of a
+	// shader's build: it runs outside the lock every other call takes where the driver allows, since a shader built on
+	// a worker held it for the whole build and the render thread's frame waited behind it, 0.5 to 1 s a frame in the
+	// shader warm-up (hacco #1261).
+	Ref<RenderingShaderContainer> shader_container;
 	Vector<RDD::ImmutableSampler> driver_immutable_samplers;
-	for (const PipelineImmutableSampler &source_sampler : p_immutable_samplers) {
-		RDD::ImmutableSampler driver_sampler;
-		driver_sampler.type = source_sampler.uniform_type;
-		driver_sampler.binding = source_sampler.binding;
+	{
+		_THREAD_SAFE_METHOD_
+		shader_container = driver->get_shader_container_format().create_container();
+		ERR_FAIL_COND_V(shader_container.is_null(), RID());
 
-		for (uint32_t j = 0; j < source_sampler.get_id_count(); j++) {
-			RDD::SamplerID *sampler_driver_id = sampler_owner.get_or_null(source_sampler.get_id(j));
-			driver_sampler.ids.push_back(*sampler_driver_id);
+		bool parsed_container = shader_container->from_bytes(p_shader_binary);
+		ERR_FAIL_COND_V_MSG(!parsed_container, RID(), "Failed to parse shader container from binary.");
+
+		for (const PipelineImmutableSampler &source_sampler : p_immutable_samplers) {
+			RDD::ImmutableSampler driver_sampler;
+			driver_sampler.type = source_sampler.uniform_type;
+			driver_sampler.binding = source_sampler.binding;
+
+			for (uint32_t j = 0; j < source_sampler.get_id_count(); j++) {
+				RDD::SamplerID *sampler_driver_id = sampler_owner.get_or_null(source_sampler.get_id(j));
+				driver_sampler.ids.push_back(*sampler_driver_id);
+			}
+
+			driver_immutable_samplers.append(driver_sampler);
 		}
-
-		driver_immutable_samplers.append(driver_sampler);
 	}
 
-	RDD::ShaderID shader_id = driver->shader_create_from_container(shader_container, driver_immutable_samplers);
+	RDD::ShaderID shader_id;
+	if (driver->shader_create_from_container_is_thread_safe()) {
+		shader_id = driver->shader_create_from_container(shader_container, driver_immutable_samplers);
+	} else {
+		_THREAD_SAFE_METHOD_
+		shader_id = driver->shader_create_from_container(shader_container, driver_immutable_samplers);
+	}
 	ERR_FAIL_COND_V(!shader_id, RID());
+
+	_THREAD_SAFE_METHOD_
 
 	// All good, let's create modules.
 

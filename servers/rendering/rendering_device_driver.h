@@ -515,6 +515,10 @@ public:
 	// Immutable samplers can be embedded when creating the pipeline layout on the condition they remain valid and unchanged, so they don't need to be
 	// specified when creating uniform sets PSO resource for binding.
 	virtual ShaderID shader_create_from_container(const Ref<RenderingShaderContainer> &p_shader_container, const Vector<ImmutableSampler> &p_immutable_samplers) = 0;
+	// Whether shader_create_from_container may run on several threads at once and beside any other call, touching
+	// nothing of the driver's but what never changes after it is made: RenderingDevice then calls it outside its own
+	// lock (hacco #1261).
+	virtual bool shader_create_from_container_is_thread_safe() const { return false; }
 	// Only meaningful if API_TRAIT_SHADER_CHANGE_INVALIDATION is SHADER_CHANGE_INVALIDATION_ALL_OR_NONE_ACCORDING_TO_LAYOUT_HASH.
 	virtual uint32_t shader_get_layout_hash(ShaderID p_shader) { return 0; }
 	virtual void shader_free(ShaderID p_shader) = 0;

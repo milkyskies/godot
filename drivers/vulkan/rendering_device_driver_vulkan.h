@@ -534,6 +534,8 @@ private:
 
 public:
 	virtual ShaderID shader_create_from_container(const Ref<RenderingShaderContainer> &p_shader_container, const Vector<ImmutableSampler> &p_immutable_samplers) override final;
+	// Vulkan's vkCreate* calls are thread-safe and the shader's bookkeeping comes from a thread-safe allocator.
+	virtual bool shader_create_from_container_is_thread_safe() const override final { return true; }
 	virtual void shader_free(ShaderID p_shader) override final;
 
 	virtual void shader_destroy_modules(ShaderID p_shader) override final;
