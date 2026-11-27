@@ -386,7 +386,10 @@ public:
 			for (int i = 0; i < p_surfaces.size(); i++) {
 				RSG::mesh_storage->mesh_add_surface(mesh, p_surfaces[i]);
 			}
-			RSG::scene->mesh_generate_pipelines(mesh, using_server_thread);
+			// The main thread never waits for the mesh's pipelines (hacco #1261): a loader thread does, so a loaded scene
+			// draws at once, but a mesh made on the main thread held its frame for every ubershader pipeline of its
+			// surfaces (225 ms for the shader warm-up's held models on ceres); a draw before they are in waits then.
+			RSG::scene->mesh_generate_pipelines(mesh, using_server_thread || Thread::is_main_thread());
 		} else {
 			command_queue.push(RSG::mesh_storage, &RendererMeshStorage::mesh_initialize, mesh);
 			command_queue.push(RSG::mesh_storage, &RendererMeshStorage::mesh_set_blend_shape_count, mesh, p_blend_shape_count);
