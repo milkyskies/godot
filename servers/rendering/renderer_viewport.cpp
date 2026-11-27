@@ -341,6 +341,8 @@ void RendererViewport::_draw_3d(Viewport *p_viewport) {
 }
 
 void RendererViewport::_draw_viewport(Viewport *p_viewport) {
+	// A picture drawn once is kept: it waits for its pipelines (hacco #1530).
+	RSG::scene->set_draw_waits_for_pipelines(p_viewport->update_mode == RSE::VIEWPORT_UPDATE_ONCE);
 	if (p_viewport->measure_render_time) {
 		String rt_id = "vp_begin_" + itos(p_viewport->self.get_id());
 		RSG::utilities->capture_timestamp(rt_id);
@@ -967,6 +969,7 @@ void RendererViewport::draw_viewports(bool p_swap_buffers) {
 		if (vp->update_mode == RSE::VIEWPORT_UPDATE_ONCE) {
 			vp->update_mode = RSE::VIEWPORT_UPDATE_DISABLED;
 		}
+		RSG::scene->set_draw_waits_for_pipelines(false);
 
 		RENDER_TIMESTAMP("< Render Viewport " + itos(i));
 

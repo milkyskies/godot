@@ -527,8 +527,10 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 				RSE::PipelineSource pipeline_source = pipeline_key.ubershader ? RSE::PIPELINE_SOURCE_DRAW : RSE::PIPELINE_SOURCE_SPECIALIZATION;
 				// A frame never waits for a pipeline (hacco #1523): a surface whose ubershader is still compiling is drawn
 				// from the first frame it is in. With the driver's cache cold one compile takes seconds, and the render
-				// thread waited for it in its frame (a 9 s frame while a world opened).
-				pipeline_rd = shader->pipeline_hash_map.get_pipeline(pipeline_key, pipeline_hash, false, pipeline_key.ubershader, pipeline_source);
+				// thread waited for it in its frame (a 9 s frame while a world opened). A viewport drawn once keeps its
+				// picture, so it waits (hacco #1530).
+				const bool wait = pipeline_key.ubershader && get_draw_waits_for_pipelines();
+				pipeline_rd = shader->pipeline_hash_map.get_pipeline(pipeline_key, pipeline_hash, wait, pipeline_key.ubershader, pipeline_source);
 
 				if (pipeline_rd.is_valid()) {
 					pipeline_valid = true;

@@ -359,6 +359,9 @@ public:
 	virtual void render_camera(const Ref<RenderSceneBuffers> &p_render_buffers, RID p_camera, RID p_scenario, RID p_viewport, Size2 p_viewport_size, uint32_t p_jitter_phase_count, float p_mesh_lod_threshold, RID p_shadow_atlas, Ref<XRInterface> &p_xr_interface, float p_window_output_max_value, RenderingServerTypes::RenderInfo *r_render_info = nullptr) = 0;
 
 	virtual void update() = 0;
+	// Whether the scene drawn next waits for a surface's pipeline still compiling: a viewport drawn once does, as its
+	// picture is kept (hacco #1530; RendererSceneRender::set_draw_waits_for_pipelines).
+	virtual void set_draw_waits_for_pipelines(bool p_wait) {}
 	virtual void render_probes() = 0;
 	virtual void update_visibility_notifiers() = 0;
 

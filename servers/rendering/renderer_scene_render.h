@@ -43,7 +43,16 @@ private:
 	RendererEnvironmentStorage environment_storage;
 	RendererCompositorStorage compositor_storage;
 
+	bool draw_waits_for_pipelines = false;
+
 public:
+	// Whether the scene drawn now waits for a surface's pipeline still compiling (hacco #1530). A view drawn every frame
+	// does not: the surface shows from the first frame its pipeline is in (hacco #1523). A viewport drawn once
+	// (RSE::VIEWPORT_UPDATE_ONCE) does: its picture is kept, and a surface missing from it stays missing (the game's
+	// surface cache baked blank pages, drawn black in shade until baked again).
+	void set_draw_waits_for_pipelines(bool p_wait) { draw_waits_for_pipelines = p_wait; }
+	bool get_draw_waits_for_pipelines() const { return draw_waits_for_pipelines; }
+
 	enum {
 		MAX_DIRECTIONAL_LIGHTS = 8,
 		MAX_DIRECTIONAL_LIGHT_CASCADES = 4,
