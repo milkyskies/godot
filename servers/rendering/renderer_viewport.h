@@ -76,6 +76,7 @@ public:
 		// FSR 3 frame generation (hacco #1441): on, and the frame it made between the last real one and this.
 		bool frame_generation = false;
 		RID frame_generation_output;
+		float frame_generation_overlay_depth = 0.0f;
 
 		RendererSceneRender::CameraData prev_camera_data;
 		uint64_t prev_camera_data_frame = 0;
@@ -286,6 +287,7 @@ public:
 	void viewport_set_screen_space_aa(RID p_viewport, RSE::ViewportScreenSpaceAA p_mode);
 	void viewport_set_use_taa(RID p_viewport, bool p_use_taa);
 	void viewport_set_frame_generation(RID p_viewport, bool p_enabled);
+	void viewport_set_frame_generation_overlay_depth(RID p_viewport, float p_depth);
 	Ref<Image> viewport_get_frame_generation_image(RID p_viewport) const;
 	void viewport_set_use_debanding(RID p_viewport, bool p_use_debanding);
 	void viewport_set_force_motion_vectors(RID p_viewport, bool p_force_motion_vectors);

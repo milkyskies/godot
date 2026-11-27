@@ -1389,7 +1389,7 @@ public:
 	/* Render Buffers */
 
 	PASS0R(Ref<RenderSceneBuffers>, render_buffers_create)
-	virtual void frame_generation_prepare(const Ref<RenderSceneBuffers> &p_render_buffers) override { scene_render->frame_generation_prepare(p_render_buffers); }
+	virtual void frame_generation_prepare(const Ref<RenderSceneBuffers> &p_render_buffers, float p_overlay_depth) override { scene_render->frame_generation_prepare(p_render_buffers, p_overlay_depth); }
 	virtual RID frame_generation_generate(const Ref<RenderSceneBuffers> &p_render_buffers) override { return scene_render->frame_generation_generate(p_render_buffers); }
 	PASS1(gi_set_use_half_resolution, bool)
 

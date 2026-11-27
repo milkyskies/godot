@@ -834,6 +834,7 @@ public:
 	FUNC2(viewport_set_screen_space_aa, RID, RSE::ViewportScreenSpaceAA)
 	FUNC2(viewport_set_use_taa, RID, bool)
 	FUNC2(viewport_set_frame_generation, RID, bool)
+	FUNC2(viewport_set_frame_generation_overlay_depth, RID, float)
 	FUNC1RC(Ref<Image>, viewport_get_frame_generation_image, RID)
 	FUNC2(viewport_set_use_debanding, RID, bool)
 	FUNC2(viewport_set_force_motion_vectors, RID, bool)

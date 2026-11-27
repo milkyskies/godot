@@ -2898,6 +2898,7 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("viewport_set_screen_space_aa", "viewport", "mode"), &RenderingServer::viewport_set_screen_space_aa);
 	ClassDB::bind_method(D_METHOD("viewport_set_use_taa", "viewport", "enable"), &RenderingServer::viewport_set_use_taa);
 	ClassDB::bind_method(D_METHOD("viewport_set_frame_generation", "viewport", "enable"), &RenderingServer::viewport_set_frame_generation);
+	ClassDB::bind_method(D_METHOD("viewport_set_frame_generation_overlay_depth", "viewport", "depth"), &RenderingServer::viewport_set_frame_generation_overlay_depth);
 	ClassDB::bind_method(D_METHOD("viewport_get_frame_generation_image", "viewport"), &RenderingServer::viewport_get_frame_generation_image);
 	ClassDB::bind_method(D_METHOD("viewport_set_use_debanding", "viewport", "enable"), &RenderingServer::viewport_set_use_debanding);
 	ClassDB::bind_method(D_METHOD("viewport_set_use_occlusion_culling", "viewport", "enable"), &RenderingServer::viewport_set_use_occlusion_culling);

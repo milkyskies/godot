@@ -246,7 +246,7 @@ public:
 	virtual bool _render_buffers_can_be_storage();
 	virtual Ref<RenderSceneBuffers> render_buffers_create() override;
 
-	virtual void frame_generation_prepare(const Ref<RenderSceneBuffers> &p_render_buffers) override;
+	virtual void frame_generation_prepare(const Ref<RenderSceneBuffers> &p_render_buffers, float p_overlay_depth) override;
 	virtual RID frame_generation_generate(const Ref<RenderSceneBuffers> &p_render_buffers) override;
 	virtual void gi_set_use_half_resolution(bool p_enable) override;
 

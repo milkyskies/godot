@@ -4282,6 +4282,14 @@
 				If [code]true[/code], a frame is generated between every two real frames of the viewport with AMD FidelityFX Super Resolution 3 frame interpolation, from its depth, motion vectors and optical flow, and the window shows each before its real frame, paced half a real frame apart. The 2D drawn over the 3D view is taken from the real frame. Forward+ on Vulkan only, for a viewport shown on a window (hacco #1441).
 			</description>
 		</method>
+		<method name="viewport_set_frame_generation_overlay_depth">
+			<return type="void" />
+			<param index="0" name="viewport" type="RID" />
+			<param index="1" name="depth" type="float" />
+			<description>
+				With frame generation on, 3D drawn at this depth buffer value or nearer (reverse Z: [code]1.0[/code] is the near plane) is an overlay, such as a first-person view model squeezed toward the near plane: it is kept out of the interpolated picture and taken from the real frame, as the 2D is. The world must never be drawn that near. [code]0.0[/code], the default, is no overlay (hacco #1483).
+			</description>
+		</method>
 		<method name="viewport_set_fsr_sharpness">
 			<return type="void" />
 			<param index="0" name="viewport" type="RID" />

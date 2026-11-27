@@ -34,7 +34,8 @@
 
 // FSR 3 frame generation (hacco #1441): the FidelityFX SDK's frame interpolation and optical flow, run on
 // RenderingDevice as FSR 2 is. A frame is generated between the last two real ones from the scene's depth and motion
-// vectors and the optical flow of the picture without the HUD; the HUD is put back on from the real frame.
+// vectors and the optical flow of the picture without the HUD; the HUD is put back on from the real frame, and so is
+// the 3D overlay, if there is one (Camera::overlay_depth).
 //
 // The SDK's own headers are not included here: they declare the same names as Godot's FSR 2 copy with other layouts,
 // so they stay inside frame_generation.cpp.
@@ -51,6 +52,9 @@ public:
 		float fov_y = 1.0f; // Radians.
 		Vector2 jitter; // Pixels of the render size.
 		float delta_ms = 16.6f;
+		// Depth buffer values this near or nearer (reverse Z) are an overlay, as a first-person view model, kept out
+		// of the interpolated picture as the 2D is; 0 for none (hacco #1483).
+		float overlay_depth = 0.0f;
 	};
 
 	FrameGeneration();
@@ -74,6 +78,9 @@ public:
 
 private:
 	Pipelines *pipelines = nullptr;
+
+	// `p_color` into the context's picture without the HUD, the overlay's pixels filled from around them.
+	void fill_overlay(Context *p_context, RID p_depth, RID p_color, float p_overlay_depth);
 };
 
 } // namespace RendererRD

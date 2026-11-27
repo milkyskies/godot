@@ -333,7 +333,7 @@ void RendererViewport::_draw_3d(Viewport *p_viewport) {
 	RSG::scene->render_camera(p_viewport->render_buffers, p_viewport->camera, p_viewport->scenario, p_viewport->self, p_viewport->internal_size, p_viewport->jitter_phase_count, screen_mesh_lod_threshold, p_viewport->shadow_atlas, xr_interface, p_viewport->window_output_max_value, &p_viewport->render_info);
 	if (p_viewport->frame_generation) {
 		// The scene is in the render target and no 2D yet: what the next generated frame is made from.
-		RSG::scene->frame_generation_prepare(p_viewport->render_buffers);
+		RSG::scene->frame_generation_prepare(p_viewport->render_buffers, p_viewport->frame_generation_overlay_depth);
 	}
 
 	RENDER_TIMESTAMP("< Render 3D Scene");
@@ -1479,6 +1479,12 @@ void RendererViewport::viewport_set_frame_generation(RID p_viewport, bool p_enab
 	}
 
 	_configure_3d_render_buffers(viewport);
+}
+
+void RendererViewport::viewport_set_frame_generation_overlay_depth(RID p_viewport, float p_depth) {
+	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL(viewport);
+	viewport->frame_generation_overlay_depth = p_depth;
 }
 
 Ref<Image> RendererViewport::viewport_get_frame_generation_image(RID p_viewport) const {

@@ -1548,7 +1548,7 @@ public:
 
 } // namespace
 
-void RendererSceneRenderRD::frame_generation_prepare(const Ref<RenderSceneBuffers> &p_render_buffers) {
+void RendererSceneRenderRD::frame_generation_prepare(const Ref<RenderSceneBuffers> &p_render_buffers, float p_overlay_depth) {
 	Ref<RenderSceneBuffersRD> rb = p_render_buffers;
 	if (rb.is_null() || !rb->get_frame_generation() || !rb->frame_generation_camera.drawn || rb->get_view_count() != 1) {
 		return;
@@ -1606,6 +1606,7 @@ void RendererSceneRenderRD::frame_generation_prepare(const Ref<RenderSceneBuffer
 	fg_camera.fov_y = camera.fov_y;
 	fg_camera.jitter = camera.jitter;
 	fg_camera.delta_ms = camera.delta_ms;
+	fg_camera.overlay_depth = p_overlay_depth;
 	frame_generation->prepare(buffers->context, rb->get_depth_texture(), rb->get_velocity_buffer(false), color, fg_camera);
 }
 

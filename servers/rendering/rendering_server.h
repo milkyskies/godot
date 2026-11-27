@@ -594,6 +594,7 @@ public:
 
 	virtual void viewport_set_use_taa(RID p_viewport, bool p_use_taa) = 0;
 	virtual void viewport_set_frame_generation(RID p_viewport, bool p_enabled) = 0;
+	virtual void viewport_set_frame_generation_overlay_depth(RID p_viewport, float p_depth) = 0;
 	virtual Ref<Image> viewport_get_frame_generation_image(RID p_viewport) const = 0;
 
 	virtual void viewport_set_use_debanding(RID p_viewport, bool p_use_debanding) = 0;

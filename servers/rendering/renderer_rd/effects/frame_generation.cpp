@@ -50,6 +50,7 @@
 #include "servers/rendering/renderer_rd/shaders/effects/frame_generation/of_generate_scd_histogram_pass.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/frame_generation/of_prepare_luma_pass.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/frame_generation/of_scale_optical_flow_advanced_pass_v5.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/effects/frame_generation_overlay.glsl.gen.h"
 
 // First: the SDK's type names are renamed away from FSR 2's (ffx_rename.h).
 #include "thirdparty/amd-fidelityfx/godot/ffx_rename.h"
@@ -123,7 +124,27 @@ struct FrameGenerationPass {
 	Lists lists;
 };
 
+// The two kinds of render target the overlay is filled in: 8-bit, and float (HDR 2D).
+enum OverlayColor {
+	OVERLAY_COLOR_8_BIT,
+	OVERLAY_COLOR_FLOAT,
+	OVERLAY_COLOR_MAX,
+};
+
+struct OverlayPushConstant {
+	int32_t display_size[2];
+	int32_t render_size[2];
+	float overlay_depth;
+	uint32_t pad[3];
+};
+
 struct FrameGeneration::Pipelines {
+	FrameGenerationOverlayShaderRD overlay;
+	RID overlay_version;
+	RID overlay_shaders[OVERLAY_COLOR_MAX];
+	RID overlay_pipelines[OVERLAY_COLOR_MAX];
+	RID nearest_sampler;
+
 	FiReconstructAndDilatePassShaderRD fi_reconstruct_and_dilate;
 	FiSetupPassShaderRD fi_setup;
 	FiReconstructPreviousDepthPassShaderRD fi_reconstruct_previous_depth;
@@ -872,6 +893,17 @@ FrameGeneration::FrameGeneration() {
 		pass.version = pass.shader->version_create();
 	}
 
+	Vector<String> overlay_modes;
+	overlay_modes.push_back("");
+	overlay_modes.push_back("\n#define FLOAT_COLOR\n");
+	pipelines->overlay.initialize(overlay_modes);
+	pipelines->overlay_version = pipelines->overlay.version_create();
+	for (int i = 0; i < OVERLAY_COLOR_MAX; i++) {
+		pipelines->overlay_shaders[i] = pipelines->overlay.version_get_shader(pipelines->overlay_version, i);
+		pipelines->overlay_pipelines[i] = rd->compute_pipeline_create(pipelines->overlay_shaders[i]);
+	}
+	pipelines->nearest_sampler = rd->sampler_create(RD::SamplerState());
+
 	RD::SamplerState sampler;
 	sampler.mag_filter = RD::SAMPLER_FILTER_LINEAR;
 	sampler.min_filter = RD::SAMPLER_FILTER_LINEAR;
@@ -931,6 +963,9 @@ FrameGeneration::~FrameGeneration() {
 	for (RID &rid : pipelines->placeholders) {
 		rd->free_rid(rid);
 	}
+	// Its pipelines are freed with the shaders.
+	pipelines->overlay.version_free(pipelines->overlay_version);
+	rd->free_rid(pipelines->nearest_sampler);
 	for (RID &rid : pipelines->past_last_mip) {
 		rd->free_rid(rid);
 	}
@@ -1028,10 +1063,9 @@ FrameGeneration::Context *FrameGeneration::context_create(Size2i p_render_size, 
 	tf.format = p_color_format;
 	tf.width = p_display_size.x;
 	tf.height = p_display_size.y;
-	tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+	tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
 	ctx->hudless = rd->texture_create(tf, RD::TextureView());
 	rd->set_resource_name(ctx->hudless, "Frame generation: frame before its 2D");
-	tf.usage_bits |= RD::TEXTURE_USAGE_STORAGE_BIT;
 	ctx->output = rd->texture_create(tf, RD::TextureView());
 	rd->set_resource_name(ctx->output, "Frame generation: generated frame");
 	return ctx;
@@ -1090,7 +1124,11 @@ void FrameGeneration::prepare(Context *p_context, RID p_depth, RID p_velocity, R
 	}
 
 	RD::get_singleton()->draw_command_begin_label("Frame generation: prepare");
-	rd->texture_copy(p_color, p_context->hudless, Vector3(), Vector3(), Vector3(p_context->display_size.x, p_context->display_size.y, 1), 0, 0, 0, 0);
+	if (p_camera.overlay_depth > 0.0f) {
+		fill_overlay(p_context, p_depth, p_color, p_camera.overlay_depth);
+	} else {
+		rd->texture_copy(p_color, p_context->hudless, Vector3(), Vector3(), Vector3(p_context->display_size.x, p_context->display_size.y, 1), 0, 0, 0, 0);
+	}
 
 	p_context->frame_id++;
 	p_context->camera = p_camera;
@@ -1117,6 +1155,34 @@ void FrameGeneration::prepare(Context *p_context, RID p_depth, RID p_velocity, R
 	RD::get_singleton()->draw_command_end_label();
 	ERR_FAIL_COND_MSG(err != FFX_OK, vformat("Frame generation: prepare failed (%d).", int(err)));
 	p_context->prepared = true;
+}
+
+void FrameGeneration::fill_overlay(Context *p_context, RID p_depth, RID p_color, float p_overlay_depth) {
+	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
+	ERR_FAIL_NULL(uniform_set_cache);
+	RenderingDevice *rd = RD::get_singleton();
+
+	const OverlayColor kind = p_context->color_format == RD::DATA_FORMAT_R8G8B8A8_UNORM ? OVERLAY_COLOR_8_BIT : OVERLAY_COLOR_FLOAT;
+	const RID shader = pipelines->overlay_shaders[kind];
+	ERR_FAIL_COND(shader.is_null());
+
+	OverlayPushConstant push_constant = {};
+	push_constant.display_size[0] = p_context->display_size.x;
+	push_constant.display_size[1] = p_context->display_size.y;
+	push_constant.render_size[0] = p_context->render_size.x;
+	push_constant.render_size[1] = p_context->render_size.y;
+	push_constant.overlay_depth = p_overlay_depth;
+
+	RD::Uniform u_color(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ pipelines->nearest_sampler, p_color }));
+	RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ pipelines->nearest_sampler, p_depth }));
+	RD::Uniform u_output(RD::UNIFORM_TYPE_IMAGE, 2, p_context->hudless);
+
+	RD::ComputeListID compute_list = rd->compute_list_begin();
+	rd->compute_list_bind_compute_pipeline(compute_list, pipelines->overlay_pipelines[kind]);
+	rd->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_color, u_depth, u_output), 0);
+	rd->compute_list_set_push_constant(compute_list, &push_constant, sizeof(OverlayPushConstant));
+	rd->compute_list_dispatch_threads(compute_list, p_context->display_size.x, p_context->display_size.y, 1);
+	rd->compute_list_end();
 }
 
 RID FrameGeneration::generate(Context *p_context, RID p_color) {
