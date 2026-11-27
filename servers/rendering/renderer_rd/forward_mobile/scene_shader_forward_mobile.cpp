@@ -947,11 +947,11 @@ void fragment() {
 }
 
 void SceneShaderForwardMobile::set_default_specialization(const ShaderSpecialization &p_specialization) {
+	// The pipelines stay (hacco #1518): a specialized pipeline's key holds its specialization and an ubershader's holds
+	// none, so no pipeline goes stale here, and the next draws ask for pipelines of the new one. Clearing every shader's
+	// pipelines waited on the render thread for every compile in flight, many seconds each with the driver's cache cold
+	// (a quality preset's shadow filter froze the game 10 to 30 s), then made every ubershader pipeline again.
 	default_specialization = p_specialization;
-
-	for (SelfList<ShaderData> *E = shader_list.first(); E; E = E->next()) {
-		E->self()->pipeline_hash_map.clear_pipelines();
-	}
 }
 
 uint32_t SceneShaderForwardMobile::get_pipeline_compilations(RSE::PipelineSource p_source) {
