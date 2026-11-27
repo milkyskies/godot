@@ -1602,7 +1602,9 @@ void MeshStorage::_multimesh_allocate_data(RID p_multimesh, int p_instances, RSE
 }
 
 void MeshStorage::_multimesh_enable_motion_vectors(MultiMesh *multimesh) {
-	if (multimesh->motion_vectors_enabled) {
+	// The canvas reads a 2D MultiMesh from its buffer's start and has no use for the previous frame's transforms: in a
+	// doubled buffer it would draw last frame's half every other frame.
+	if (multimesh->motion_vectors_enabled || multimesh->xform_format == RSE::MULTIMESH_TRANSFORM_2D) {
 		return;
 	}
 
@@ -1635,6 +1637,7 @@ void MeshStorage::_multimesh_enable_motion_vectors(MultiMesh *multimesh) {
 	}
 
 	multimesh->buffer = new_buffer;
+	multimesh->uniform_set_2d = RID(); // Cleared by dependency.
 	multimesh->uniform_set_3d = RID(); // Cleared by dependency.
 
 	// Invalidate any references to the buffer that was released and the uniform set that was pointing to it.
