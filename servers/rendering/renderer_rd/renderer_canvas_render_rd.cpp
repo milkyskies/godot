@@ -494,7 +494,7 @@ RID RendererCanvasRenderRD::_get_pipeline_specialization_or_ubershader(CanvasSha
 
 		bool wait_for_compilation = r_pipeline_key.ubershader || ubershader_iterations == 1;
 		RSE::PipelineSource source = RSE::PIPELINE_SOURCE_CANVAS;
-		RID pipeline = p_shader_data->pipeline_hash_map.get_pipeline(r_pipeline_key, r_pipeline_key.hash(), wait_for_compilation, source);
+		RID pipeline = p_shader_data->pipeline_hash_map.get_pipeline(r_pipeline_key, r_pipeline_key.hash(), wait_for_compilation, wait_for_compilation, source);
 		if (pipeline.is_valid()) {
 			return pipeline;
 		}

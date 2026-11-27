@@ -2589,7 +2589,8 @@ void RenderForwardMobile::_render_list_template(RenderingDevice::DrawListID p_dr
 
 			if (shader != prev_shader || pipeline_hash != prev_pipeline_hash) {
 				RSE::PipelineSource pipeline_source = pipeline_key.ubershader ? RSE::PIPELINE_SOURCE_DRAW : RSE::PIPELINE_SOURCE_SPECIALIZATION;
-				pipeline_rd = shader->pipeline_hash_map.get_pipeline(pipeline_key, pipeline_hash, pipeline_key.ubershader == (ubershader_iterations - 1), pipeline_source);
+				const bool last = pipeline_key.ubershader == (ubershader_iterations - 1);
+				pipeline_rd = shader->pipeline_hash_map.get_pipeline(pipeline_key, pipeline_hash, last, last, pipeline_source);
 
 				if (pipeline_rd.is_valid()) {
 					pipeline_valid = true;

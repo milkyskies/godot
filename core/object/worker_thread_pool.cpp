@@ -98,38 +98,8 @@ void WorkerThreadPool::_process_task(Task *p_task) {
 
 	if (p_task->group) {
 		// Handling a group
-		bool do_post = false;
+		_run_group_elements(p_task->group);
 
-		while (true) {
-			uint32_t work_index = p_task->group->index.postincrement();
-
-			if (work_index >= p_task->group->max) {
-				break;
-			}
-			if (p_task->native_group_func) {
-				p_task->native_group_func(p_task->native_func_userdata, work_index);
-			} else if (p_task->template_userdata) {
-				p_task->template_userdata->callback_indexed(work_index);
-			} else {
-				p_task->callable.call(work_index);
-			}
-
-			// This is the only way to ensure posting is done when all tasks are really complete.
-			uint32_t completed_amount = p_task->group->completed_index.increment();
-
-			if (completed_amount == p_task->group->max) {
-				do_post = true;
-			}
-		}
-
-		if (do_post && p_task->template_userdata) {
-			memdelete(p_task->template_userdata); // This is no longer needed at this point, so get rid of it.
-		}
-
-		if (do_post) {
-			p_task->group->done_semaphore.post();
-			p_task->group->completed.set_to(true);
-		}
 		uint32_t max_users = p_task->group->tasks_used + 1; // Add 1 because the thread waiting for it is also user. Read before to avoid another thread freeing task after increment.
 		uint32_t finished_users = p_task->group->finished.increment();
 
@@ -188,6 +158,43 @@ void WorkerThreadPool::_process_task(Task *p_task) {
 	set_current_thread_safe_for_nodes(safe_for_nodes_backup);
 	MessageQueue::set_thread_singleton_override(call_queue_backup);
 #endif
+}
+
+// Runs the group's elements not yet taken, until none is left; whoever finishes the last one posts the group done. Any
+// thread may: the group's own tasks, and a thread waiting for the group (hacco #1523).
+void WorkerThreadPool::_run_group_elements(Group *p_group) {
+	bool do_post = false;
+
+	while (true) {
+		uint32_t work_index = p_group->index.postincrement();
+
+		if (work_index >= p_group->max) {
+			break;
+		}
+		if (p_group->native_func) {
+			p_group->native_func(p_group->native_func_userdata, work_index);
+		} else if (p_group->template_userdata) {
+			p_group->template_userdata->callback_indexed(work_index);
+		} else {
+			p_group->callable.call(work_index);
+		}
+
+		// This is the only way to ensure posting is done when all tasks are really complete.
+		uint32_t completed_amount = p_group->completed_index.increment();
+
+		if (completed_amount == p_group->max) {
+			do_post = true;
+		}
+	}
+
+	if (do_post) {
+		if (p_group->template_userdata) {
+			memdelete(p_group->template_userdata); // This is no longer needed at this point, so get rid of it.
+			p_group->template_userdata = nullptr;
+		}
+		p_group->done_semaphore.post();
+		p_group->completed.set_to(true);
+	}
 }
 
 void WorkerThreadPool::_thread_function(void *p_user) {
@@ -716,15 +723,15 @@ WorkerThreadPool::GroupID WorkerThreadPool::_add_group_task(const Callable &p_ca
 
 	} else {
 		group->tasks_used = p_tasks;
+		group->callable = p_callable;
+		group->native_func = p_func;
+		group->native_func_userdata = p_userdata;
+		group->template_userdata = p_template_userdata;
 		tasks_posted = (Task **)alloca(sizeof(Task *) * p_tasks);
 		for (int i = 0; i < p_tasks; i++) {
 			Task *task = task_allocator.alloc();
-			task->native_group_func = p_func;
-			task->native_func_userdata = p_userdata;
 			task->description = p_description;
 			task->group = group;
-			task->callable = p_callable;
-			task->template_userdata = p_template_userdata;
 			tasks_posted[i] = task;
 			// No task ID is used.
 		}
@@ -783,6 +790,10 @@ void WorkerThreadPool::wait_for_group_task_completion(GroupID p_group) {
 		if (this == singleton) {
 			_unlock_unlockable_mutexes();
 		}
+		// The waiter runs the elements nobody has taken yet itself, then waits only for those running elsewhere
+		// (hacco #1523): the group's tasks sat in the queue behind whatever came first, and the render thread's scene
+		// cull waited about 10 s behind pipeline compiles filling every thread with the driver's cache cold.
+		_run_group_elements(group);
 		group->done_semaphore.wait();
 		if (this == singleton) {
 			_lock_unlockable_mutexes();
