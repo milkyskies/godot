@@ -59,6 +59,7 @@ void WorkerThreadPool::_process_task(Task *p_task) {
 	int pool_thread_index = thread_ids[Thread::get_caller_id()];
 	ThreadData &curr_thread = threads[pool_thread_index];
 	Task *prev_task = nullptr; // In case this is recursively called.
+	bool prev_has_pump_task = false;
 
 	bool safe_for_nodes_backup = is_current_thread_safe_for_nodes();
 	CallQueue *call_queue_backup = MessageQueue::get_singleton() != MessageQueue::get_main_singleton() ? MessageQueue::get_singleton() : nullptr;
@@ -78,7 +79,10 @@ void WorkerThreadPool::_process_task(Task *p_task) {
 		p_task->pool_thread_index = pool_thread_index;
 		prev_task = curr_thread.current_task;
 		curr_thread.current_task = p_task;
-		curr_thread.has_pump_task = p_task->is_pump_task;
+		// Whether a pump task is on this thread's stack, kept through the tasks it runs (hacco #1261): set from the
+		// task alone, it was false again once the render thread's loop had run one task while waiting.
+		prev_has_pump_task = curr_thread.has_pump_task;
+		curr_thread.has_pump_task = prev_has_pump_task || p_task->is_pump_task;
 		if (p_task->pending_notify_yield_over) {
 			curr_thread.yield_is_over = true;
 		}
@@ -165,6 +169,7 @@ void WorkerThreadPool::_process_task(Task *p_task) {
 #ifdef THREADS_ENABLED
 	{
 		curr_thread.current_task = prev_task;
+		curr_thread.has_pump_task = prev_has_pump_task;
 		if (low_priority) {
 			low_priority_threads_used--;
 
@@ -318,7 +323,8 @@ void WorkerThreadPool::_notify_threads(const ThreadData *p_current_thread_data, 
 		if (th.signaled) {
 			continue;
 		}
-		if (th.awaited_task) {
+		// A thread with a pump task takes only the task it waits for (_wait_collaboratively), not new work.
+		if (th.awaited_task && !th.has_pump_task) {
 			if (likely(&th != p_current_thread_data)) {
 				th.cond_var.notify_one();
 			}
@@ -536,9 +542,23 @@ void WorkerThreadPool::_wait_collaboratively(ThreadData *p_caller_pool_thread, T
 				}
 			}
 
-			if (p_caller_pool_thread->pool->task_queue.first()) {
+			if (p_caller_pool_thread->has_pump_task) {
+				// A pump task (the render thread's loop) runs only the task it waits for, when that is still queued
+				// (hacco #1261): yielding or waiting, it took whatever was first in the queue, and another shader's or
+				// pipeline's build of 200 ms or more held the render thread while the main thread waited for its frame.
+				// The pool's other threads take those.
+				if (p_task != ThreadData::YIELDING) {
+					for (SelfList<Task> *e = task_queue.first(); e; e = e->next()) {
+						if (e->self() == p_task) {
+							task_queue.remove(e);
+							task_to_process = p_task;
+							break;
+						}
+					}
+				}
+			} else if (p_caller_pool_thread->pool->task_queue.first()) {
 				task_to_process = task_queue.first()->self();
-				if ((p_task == ThreadData::YIELDING || p_caller_pool_thread->has_pump_task == true) && task_to_process->is_pump_task) {
+				if (p_task == ThreadData::YIELDING && task_to_process->is_pump_task) {
 					task_to_process = nullptr;
 					_notify_threads(p_caller_pool_thread, 1, 0);
 				} else {
