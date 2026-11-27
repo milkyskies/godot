@@ -37,6 +37,8 @@
 #include "core/os/safe_binary_mutex.h"
 #include "core/os/thread_safe.h"
 
+#include "core/profiling/hacco_waits.h"
+
 WorkerThreadPool::Task *const WorkerThreadPool::ThreadData::YIELDING = (Task *)1;
 
 HashMap<StringName, WorkerThreadPool *> WorkerThreadPool::named_pools;
@@ -407,6 +409,12 @@ bool WorkerThreadPool::is_task_completed(TaskID p_task_id) const {
 }
 
 Error WorkerThreadPool::wait_for_task_completion(TaskID p_task_id) {
+#ifdef HACCO_WAITS
+	struct HaccoNote {
+		uint64_t from = hacco_wait_now();
+		~HaccoNote() { hacco_wait_note("pool wait", from, 2000); }
+	} hacco_note;
+#endif
 	task_mutex.lock();
 	Task **taskp = tasks.getptr(p_task_id);
 	if (!taskp) {
@@ -585,7 +593,17 @@ void WorkerThreadPool::_wait_collaboratively(ThreadData *p_caller_pool_thread, T
 		}
 
 		if (task_to_process) {
+#ifdef HACCO_WAITS
+			const bool pump = p_caller_pool_thread->has_pump_task;
+			const String what = task_to_process->description;
+			const uint64_t from = hacco_wait_now();
 			_process_task(task_to_process);
+			if (pump && hacco_wait_now() - from >= 5000) {
+				hacco_wait_note(("pump ran " + what).utf8().get_data(), from, 5000);
+			}
+#else
+			_process_task(task_to_process);
+#endif
 		}
 	}
 }
@@ -745,6 +763,12 @@ bool WorkerThreadPool::is_group_task_completed(GroupID p_group) const {
 }
 
 void WorkerThreadPool::wait_for_group_task_completion(GroupID p_group) {
+#ifdef HACCO_WAITS
+	struct HaccoNote {
+		uint64_t from = hacco_wait_now();
+		~HaccoNote() { hacco_wait_note("pool wait", from, 2000); }
+	} hacco_note;
+#endif
 #ifdef THREADS_ENABLED
 	task_mutex.lock();
 	Group **groupp = groups.getptr(p_group);

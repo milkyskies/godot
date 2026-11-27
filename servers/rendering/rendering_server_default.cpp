@@ -30,6 +30,10 @@
 
 #include "rendering_server_default.h"
 
+#include "core/profiling/hacco_waits.h"
+
+#include <cstdio>
+
 #include "core/object/callable_mp.h"
 #include "core/os/os.h"
 #include "core/profiling/profiling.h"
@@ -123,6 +127,9 @@ void RenderingServerDefault::_draw(bool p_swap_buffers, double frame_step) {
 	}
 #endif // XR_DISABLED
 
+#ifdef GODOT_USE_TRACY
+	FrameMarkNamed("render");
+#endif
 	GodotProfileZoneGrouped(_profile_zone, "update_visibility_notifiers");
 	RSG::canvas->update_visibility_notifiers();
 	RSG::scene->update_visibility_notifiers();
@@ -417,8 +424,48 @@ void RenderingServerDefault::_thread_loop() {
 	DisplayServer::get_singleton()->gl_window_make_current(DisplayServerEnums::MAIN_WINDOW_ID); // Move GL to this thread.
 
 	while (!exit) {
+#ifdef HACCO_WAITS
+		// How much of the render thread's wait and of its flush was spent runnable but not running (hacco #1261).
+		// The thread's time on a CPU (r_run) and runnable but waiting for one (returned), ns.
+		auto run_queue_ns = [](uint64_t &r_run) -> uint64_t {
+			FILE *f = fopen("/proc/thread-self/schedstat", "r");
+			unsigned long long run = 0, wait = 0;
+			if (f) {
+				if (fscanf(f, "%llu %llu", &run, &wait) != 2) {
+					run = 0;
+					wait = 0;
+				}
+				fclose(f);
+			}
+			r_run = run;
+			return wait;
+		};
+		uint64_t c0, c1, c2;
+		uint64_t q0 = run_queue_ns(c0);
+		uint64_t t0 = hacco_wait_now();
 		WorkerThreadPool::get_singleton()->yield();
+		uint64_t q1 = run_queue_ns(c1);
+		uint64_t t1 = hacco_wait_now();
+		if (t1 - t0 >= 20000) {
+			char text[96];
+			int n = snprintf(text, sizeof(text), "render yield %.1f ms; on cpu %.1f ms; run queue %.1f ms", (t1 - t0) / 1000.0, (c1 - c0) / 1e6, (q1 - q0) / 1e6);
+			TracyMessage(text, n);
+		}
+		{
+			GodotProfileZone("render thread: flush_all");
+			command_queue.flush_all();
+		}
+		uint64_t q2 = run_queue_ns(c2);
+		if (hacco_wait_now() - t1 >= 20000) {
+			char text[96];
+			int n = snprintf(text, sizeof(text), "render flush %.1f ms; on cpu %.1f ms; run queue %.1f ms", (hacco_wait_now() - t1) / 1000.0, (c2 - c1) / 1e6, (q2 - q1) / 1e6);
+			TracyMessage(text, n);
+		}
+#else
+		WorkerThreadPool::get_singleton()->yield();
+		GodotProfileZone("render thread: flush_all");
 		command_queue.flush_all();
+#endif
 	}
 
 	DisplayServer::get_singleton()->release_rendering_thread();

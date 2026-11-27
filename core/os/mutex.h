@@ -31,6 +31,7 @@
 #pragma once
 
 #include "core/typedefs.h"
+#include "core/profiling/hacco_waits.h"
 
 #ifdef MINGW_ENABLED
 #define MINGW_STDTHREAD_REDUNDANCY_WARNING
@@ -56,7 +57,15 @@ class MutexImpl {
 
 public:
 	_ALWAYS_INLINE_ void lock() const {
+#ifdef HACCO_WAITS
+		if (!mutex.try_lock()) {
+			const uint64_t from = hacco_wait_now();
+			mutex.lock();
+			hacco_wait_note("lock", from, 2000);
+		}
+#else
 		mutex.lock();
+#endif
 	}
 
 	_ALWAYS_INLINE_ void unlock() const {
@@ -73,8 +82,15 @@ class [[nodiscard]] MutexLock {
 	mutable THREADING_NAMESPACE::unique_lock<typename MutexT::StdMutexType> lock;
 
 public:
+#ifdef HACCO_WAITS
+	explicit MutexLock(const MutexT &p_mutex) :
+			lock(p_mutex.mutex, THREADING_NAMESPACE::defer_lock) {
+		temp_relock();
+	}
+#else
 	explicit MutexLock(const MutexT &p_mutex) :
 			lock(p_mutex.mutex) {}
+#endif
 
 	// Clarification: all the funny syntax is needed so this function exists only for binary mutexes.
 	template <typename T = MutexT>
@@ -84,7 +100,15 @@ public:
 	}
 
 	_ALWAYS_INLINE_ void temp_relock() const {
+#ifdef HACCO_WAITS
+		if (!lock.try_lock()) {
+			const uint64_t from = hacco_wait_now();
+			lock.lock();
+			hacco_wait_note("lock", from, 2000);
+		}
+#else
 		lock.lock();
+#endif
 	}
 
 	_ALWAYS_INLINE_ void temp_unlock() const {

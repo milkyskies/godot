@@ -33,6 +33,7 @@
 #include "core/object/worker_thread_pool.h"
 #include "core/os/condition_variable.h"
 #include "core/os/mutex.h"
+#include "core/profiling/hacco_waits.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/simple_type.h"
 #include "core/templates/tuple.h"
@@ -63,8 +64,23 @@ class CommandQueueMT {
 				CommandBase(NeedsSync), instance(p_instance), method(p_method), args(std::forward<FwdArgs>(p_args)...) {}
 
 		void call() override {
+#ifdef HACCO_WAITS
+			const uint64_t from = hacco_wait_now();
 			call_impl(BuildIndexSequence<sizeof...(Args)>{});
+			hacco_wait_note("command", from, 1000, _function());
+#else
+			call_impl(BuildIndexSequence<sizeof...(Args)>{});
+#endif
 		}
+
+#ifdef HACCO_WAITS
+		// The function the method points to (GCC's bound member function extension), for the note's address.
+		const void *_function() const {
+			GODOT_GCC_WARNING_PUSH_AND_IGNORE("-Wpmf-conversions")
+			return reinterpret_cast<const void *>((void (*)(T *))(instance->*method));
+			GODOT_GCC_WARNING_POP
+		}
+#endif
 
 	private:
 		template <size_t... I>
@@ -90,7 +106,15 @@ class CommandQueueMT {
 				CommandBase(true), instance(p_instance), method(p_method), ret(p_ret), args{ p_args... } {}
 
 		void call() override {
+#ifdef HACCO_WAITS
+			const uint64_t from = hacco_wait_now();
 			*ret = call_impl(BuildIndexSequence<sizeof...(Args)>{});
+			GODOT_GCC_WARNING_PUSH_AND_IGNORE("-Wpmf-conversions")
+			hacco_wait_note("command", from, 1000, reinterpret_cast<const void *>((void (*)(T *))(instance->*method)));
+			GODOT_GCC_WARNING_POP
+#else
+			*ret = call_impl(BuildIndexSequence<sizeof...(Args)>{});
+#endif
 		}
 
 	private:
@@ -230,6 +254,9 @@ private:
 			sync_cond_var.wait(p_lock);
 		} while (sync_head < sync_head_goal);
 		last_sync_wait_usec = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - waited_from).count();
+#ifdef HACCO_WAITS
+		hacco_wait_note("sync", hacco_wait_now() - last_sync_wait_usec, 2000);
+#endif
 		sync_awaiters--;
 		_prevent_sync_wraparound();
 	}
