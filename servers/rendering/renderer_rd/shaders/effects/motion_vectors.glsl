@@ -65,9 +65,12 @@ void main() {
 	vec2 cell_pos_previous_uv = cell_pos_uv + cell_pos_velocity;
 
 	// Draw the shapes.
-	float epsilon = 1e-6f;
+	// Moving means a hundredth of a render pixel or more: motion derived from depth for a still pixel carries
+	// the float error of the reprojection's inverse, up to about a tenth of a pixel next to the camera, which a
+	// threshold in UV counted as motion (hacco #1527).
+	float still_px = 0.01f;
 	vec2 cell_pos_delta_uv = cell_pos_uv - cell_pos_previous_uv;
-	bool motion_active = length(cell_pos_delta_uv) > epsilon;
+	bool motion_active = length(cell_pos_delta_uv * params.resolution) > still_px;
 	vec3 color;
 	if (any(isnan(cell_pos_delta_uv))) {
 		color = nan_color;
@@ -83,7 +86,9 @@ void main() {
 		alpha = 1.0f;
 	} else if (motion_active) {
 		// Motion vector line.
-		alpha = 1.0f - line_segment(uv_interp, cell_pos_uv, cell_pos_previous_uv);
+		// Clamped: farther than a pixel from the line the alpha went negative and the blend brightened and
+		// inverted the picture under it (hacco #1527).
+		alpha = clamp(1.0f - line_segment(uv_interp, cell_pos_uv, cell_pos_previous_uv), 0.0f, 1.0f);
 	} else {
 		// Ignore pixel.
 		alpha = 0.0f;
