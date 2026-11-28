@@ -190,7 +190,7 @@ class RendererCanvasRenderRD : public RendererCanvasRender {
 		RD::VertexFormatID quad_vertex_format_id;
 		RD::VertexFormatID primitive_vertex_format_id;
 		ShaderCompiler compiler;
-		uint32_t pipeline_compilations[RSE::PIPELINE_SOURCE_MAX] = {};
+		SafeNumeric<uint32_t> pipeline_compilations[RSE::PIPELINE_SOURCE_MAX];
 		Mutex mutex;
 	} shader;
 

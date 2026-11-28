@@ -377,7 +377,7 @@ public:
 
 	ShaderSpecialization default_specialization = {};
 
-	uint32_t pipeline_compilations[RSE::PIPELINE_SOURCE_MAX] = {};
+	SafeNumeric<uint32_t> pipeline_compilations[RSE::PIPELINE_SOURCE_MAX];
 
 	SceneShaderForwardClustered();
 	~SceneShaderForwardClustered();

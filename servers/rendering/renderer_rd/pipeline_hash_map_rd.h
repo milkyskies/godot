@@ -37,6 +37,7 @@
 #include "core/templates/rb_map.h"
 #include "core/templates/rb_set.h"
 #include "core/templates/rid.h"
+#include "core/templates/safe_refcount.h"
 #include "core/templates/vector.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server_enums.h"
@@ -48,8 +49,7 @@ class PipelineHashMapRD {
 private:
 	CreationClass *creation_object = nullptr;
 	CreationFunction creation_function = nullptr;
-	Mutex *compilations_mutex = nullptr;
-	uint32_t *compilations = nullptr;
+	SafeNumeric<uint32_t> *compilations = nullptr;
 	RBMap<uint32_t, RID> hash_map;
 	LocalVector<Pair<uint32_t, RID>> compiled_queue;
 	Mutex compiled_queue_mutex;
@@ -119,9 +119,8 @@ public:
 		// Record the pipeline as submitted, a task can't be started for it again.
 		compilation_set.insert(p_key_hash);
 
-		if (compilations_mutex != nullptr) {
-			MutexLock compilations_lock(*compilations_mutex);
-			compilations[p_source]++;
+		if (compilations != nullptr) {
+			compilations[p_source].increment();
 		}
 
 #if PRINT_PIPELINE_COMPILATION_KEYS
@@ -226,9 +225,11 @@ public:
 	}
 
 	// Set the external pipeline compilations array to increase the counters on every time a pipeline is compiled.
-	void set_compilations(uint32_t *p_compilations, Mutex *p_compilations_mutex) {
+	// The counters are atomic, not under a lock: the scene shaders' lock is held for a whole shader's parse, and the
+	// render thread reading them (get_rendering_info) and the workers counting waited 75 to 156 ms behind one in the
+	// shader warm-up (hacco #1261).
+	void set_compilations(SafeNumeric<uint32_t> *p_compilations) {
 		compilations = p_compilations;
-		compilations_mutex = p_compilations_mutex;
 	}
 
 	void set_creation_object_and_function(CreationClass *p_creation_object, CreationFunction p_creation_function) {

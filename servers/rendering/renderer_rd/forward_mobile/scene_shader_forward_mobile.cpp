@@ -517,7 +517,7 @@ bool SceneShaderForwardMobile::ShaderData::is_valid() const {
 SceneShaderForwardMobile::ShaderData::ShaderData() :
 		shader_list_element(this) {
 	pipeline_hash_map.set_creation_object_and_function(this, &ShaderData::_create_pipeline);
-	pipeline_hash_map.set_compilations(SceneShaderForwardMobile::singleton->pipeline_compilations, &SceneShaderForwardMobile::singleton_mutex);
+	pipeline_hash_map.set_compilations(SceneShaderForwardMobile::singleton->pipeline_compilations);
 }
 
 SceneShaderForwardMobile::ShaderData::~ShaderData() {
@@ -955,8 +955,7 @@ void SceneShaderForwardMobile::set_default_specialization(const ShaderSpecializa
 }
 
 uint32_t SceneShaderForwardMobile::get_pipeline_compilations(RSE::PipelineSource p_source) {
-	MutexLock lock(SceneShaderForwardMobile::singleton_mutex);
-	return pipeline_compilations[p_source];
+	return pipeline_compilations[p_source].get();
 }
 
 void SceneShaderForwardMobile::enable_fp32_shader_group() {

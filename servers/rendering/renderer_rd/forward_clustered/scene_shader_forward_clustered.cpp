@@ -570,7 +570,7 @@ bool SceneShaderForwardClustered::ShaderData::is_valid() const {
 SceneShaderForwardClustered::ShaderData::ShaderData() :
 		shader_list_element(this) {
 	pipeline_hash_map.set_creation_object_and_function(this, &ShaderData::_create_pipeline);
-	pipeline_hash_map.set_compilations(SceneShaderForwardClustered::singleton->pipeline_compilations, &SceneShaderForwardClustered::singleton_mutex);
+	pipeline_hash_map.set_compilations(SceneShaderForwardClustered::singleton->pipeline_compilations);
 }
 
 SceneShaderForwardClustered::ShaderData::~ShaderData() {
@@ -1071,6 +1071,5 @@ bool SceneShaderForwardClustered::is_advanced_shader_group_enabled(bool p_multiv
 }
 
 uint32_t SceneShaderForwardClustered::get_pipeline_compilations(RSE::PipelineSource p_source) {
-	MutexLock lock(SceneShaderForwardClustered::singleton_mutex);
-	return pipeline_compilations[p_source];
+	return pipeline_compilations[p_source].get();
 }

@@ -1680,7 +1680,7 @@ bool RendererCanvasRenderRD::CanvasShaderData::is_valid() const {
 RendererCanvasRenderRD::CanvasShaderData::CanvasShaderData() {
 	RendererCanvasRenderRD *canvas_singleton = static_cast<RendererCanvasRenderRD *>(RendererCanvasRender::singleton);
 	pipeline_hash_map.set_creation_object_and_function(this, &CanvasShaderData::_create_pipeline);
-	pipeline_hash_map.set_compilations(&canvas_singleton->shader.pipeline_compilations[0], &canvas_singleton->shader.mutex);
+	pipeline_hash_map.set_compilations(&canvas_singleton->shader.pipeline_compilations[0]);
 }
 
 RendererCanvasRenderRD::CanvasShaderData::~CanvasShaderData() {
@@ -2179,9 +2179,7 @@ void RendererCanvasRenderRD::set_debug_redraw(bool p_enabled, double p_time, con
 }
 
 uint32_t RendererCanvasRenderRD::get_pipeline_compilations(RSE::PipelineSource p_source) {
-	RendererCanvasRenderRD *canvas_singleton = static_cast<RendererCanvasRenderRD *>(RendererCanvasRender::singleton);
-	MutexLock lock(canvas_singleton->shader.mutex);
-	return shader.pipeline_compilations[p_source];
+	return shader.pipeline_compilations[p_source].get();
 }
 
 void RendererCanvasRenderRD::_render_batch_items(RenderTarget p_to_render_target, int p_item_count, const Transform2D &p_canvas_transform_inverse, Light *p_lights, bool &r_sdf_used, bool p_to_backbuffer, RenderingServerTypes::RenderInfo *r_render_info) {
