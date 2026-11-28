@@ -5169,6 +5169,17 @@ RenderForwardClustered::RenderForwardClustered() {
 #endif
 
 		scene_shader.init(defines);
+
+		// The window draws with motion vectors from its first frame when the project asks for TAA or a temporal
+		// upscaler: the advanced group is on from here, so each scene shader loads it as it is made. Turned on by
+		// the first such draw, it loaded that group of every scene shader made so far, one after another on the
+		// render thread in that frame: 130 to 160 ms of the game's first frame on ceres, and 0.8 s when the first such
+		// draw came a few frames later (hacco #1261).
+		const ProjectSettings *settings = ProjectSettings::get_singleton();
+		const int scaling_mode = settings->get_setting("rendering/scaling_3d/mode", 0);
+		if (bool(settings->get_setting("rendering/anti_aliasing/quality/use_taa", false)) || scaling_mode == RSE::VIEWPORT_SCALING_3D_MODE_FSR2 || scaling_mode == RSE::VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL) {
+			scene_shader.enable_advanced_shader_group();
+		}
 	}
 
 	/* shadow sampler */
